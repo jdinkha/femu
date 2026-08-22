@@ -15,6 +15,9 @@ public:
 
     void ConnectBus(Bus* b) { bus = b; }
 
+    uint8_t cpuRead(uint16_t addr);
+    void    cpuWrite(uint16_t addr, uint8_t data);
+
     // ---- Registers ----
     uint8_t  A  = 0x00;   // Accumulator
     uint8_t  X  = 0x00;   // Index X
@@ -46,6 +49,15 @@ public:
     bool complete() const { return cycles == 0; }
 
     uint32_t GetClockCount() const { return clock_count; }
+    void     SetClockCount(uint32_t v) { clock_count = v; } // for aligning trace CYC with a reference log
+
+    // Peek-only disassembly of the instruction at addr - never advances PC,
+    // never calls fetch(), never writes anything. Used by the nestest
+    // harness / debuggers. Text format loosely follows the Nintendulator
+    // style used by nestest.log (operand plus resolved effective address
+    // and memory value where relevant, e.g. "LDA $10,X @ 15 = 00").
+    struct Disasm { std::string text; uint8_t length; };
+    Disasm DisassembleAt(uint16_t addr);
 
 private:
     Bus* bus = nullptr;
@@ -58,12 +70,9 @@ private:
     uint32_t clock_count = 0;
     bool     acc_mode = false; // true if current addressing mode is Accumulator
 
-    uint8_t read(uint16_t addr);
-    void    write(uint16_t addr, uint8_t data);
     uint8_t fetch();
 
     // ---- Addressing modes ----
-    // Each returns 1 if it *might* need an extra cycle (page-cross dependent), else 0.
     uint8_t IMP(); uint8_t ACC(); uint8_t IMM();
     uint8_t ZP0(); uint8_t ZPX(); uint8_t ZPY();
     uint8_t REL();
@@ -84,8 +93,22 @@ private:
     uint8_t TAX(); uint8_t TAY(); uint8_t TSX(); uint8_t TXA(); uint8_t TXS();
     uint8_t TYA();
 
-    // Catch-all placeholder for illegal/undocumented opcodes
+    // Catch-all placeholder for opcodes with no defined behavior (JAM/KIL -
+    // these freeze real hardware; we just no-op rather than hanging)
     uint8_t XXX();
+
+    // ---- Illegal/undocumented opcodes ----
+    // Deterministic combo instructions (well-documented, used by real games
+    // and by nestest's extended opcode tests):
+    uint8_t LAX(); uint8_t SAX(); uint8_t DCP(); uint8_t ISC();
+    uint8_t SLO(); uint8_t RLA(); uint8_t SRE(); uint8_t RRA();
+    uint8_t ANC(); uint8_t ALR(); uint8_t ARR(); uint8_t AXS();
+    // Genuinely unstable on real silicon (depend on internal bus-conflict
+    // behavior that varies by chip revision). Implemented as the common
+    // approximation most emulators use; don't expect a bit-exact match
+    // against every reference trace.
+    uint8_t LXA(); uint8_t XAA(); uint8_t SHA(); uint8_t TAS();
+    uint8_t SHY(); uint8_t SHX(); uint8_t LAS();
 
     struct INSTRUCTION {
         std::string name;

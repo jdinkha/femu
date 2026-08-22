@@ -3,10 +3,13 @@
 #include <array>
 #include <memory>
 #include "Cartridge.h"
+#include "../cpu/cpu.h"
 
 class Bus {
 public:
     Bus();
+
+    CPU cpu;
 
     void insertCartridge(const std::shared_ptr<Cartridge>& cart);
     void reset();

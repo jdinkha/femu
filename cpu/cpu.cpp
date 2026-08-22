@@ -1,8 +1,9 @@
 #include "cpu.h"
-#include "bus.h"
+#include "../mem/Bus.h"
+#include <cstdio>
 
-uint8_t CPU::read(uint16_t addr)              { return bus->read(addr); }
-void    CPU::write(uint16_t addr, uint8_t d)  { bus->write(addr, d); }
+uint8_t CPU::cpuRead(uint16_t addr)              { return bus->cpuRead(addr); }
+void    CPU::cpuWrite(uint16_t addr, uint8_t d)  { bus->cpuWrite(addr, d); }
 
 uint8_t CPU::GetFlag(FLAGS6502 f) const { return (status & f) ? 1 : 0; }
 void    CPU::SetFlag(FLAGS6502 f, bool v) {
@@ -12,7 +13,7 @@ void    CPU::SetFlag(FLAGS6502 f, bool v) {
 
 uint8_t CPU::fetch() {
     if (!acc_mode)
-        fetched = read(addr_abs);
+        fetched = cpuRead(addr_abs);
     else
         fetched = A;
     return fetched;
@@ -27,83 +28,83 @@ uint8_t CPU::IMM() { acc_mode = false; addr_abs = PC++; return 0; }
 
 uint8_t CPU::ZP0() {
     acc_mode = false;
-    addr_abs = read(PC); PC++;
+    addr_abs = cpuRead(PC); PC++;
     addr_abs &= 0x00FF;
     return 0;
 }
 
 uint8_t CPU::ZPX() {
     acc_mode = false;
-    addr_abs = (read(PC) + X); PC++;
+    addr_abs = (cpuRead(PC) + X); PC++;
     addr_abs &= 0x00FF;
     return 0;
 }
 
 uint8_t CPU::ZPY() {
     acc_mode = false;
-    addr_abs = (read(PC) + Y); PC++;
+    addr_abs = (cpuRead(PC) + Y); PC++;
     addr_abs &= 0x00FF;
     return 0;
 }
 
 uint8_t CPU::REL() {
     acc_mode = false;
-    addr_rel = read(PC); PC++;
-    if (addr_rel & 0x80) addr_rel |= 0xFF00; // sign-extend
+    addr_rel = cpuRead(PC); PC++;
+    if (addr_rel & 0x80) addr_rel |= 0xFF00;
     return 0;
 }
 
 uint8_t CPU::ABS() {
     acc_mode = false;
-    uint16_t lo = read(PC); PC++;
-    uint16_t hi = read(PC); PC++;
+    uint16_t lo = cpuRead(PC); PC++;
+    uint16_t hi = cpuRead(PC); PC++;
     addr_abs = (hi << 8) | lo;
     return 0;
 }
 
 uint8_t CPU::ABX() {
     acc_mode = false;
-    uint16_t lo = read(PC); PC++;
-    uint16_t hi = read(PC); PC++;
+    uint16_t lo = cpuRead(PC); PC++;
+    uint16_t hi = cpuRead(PC); PC++;
     addr_abs = ((hi << 8) | lo) + X;
-    return ((addr_abs & 0xFF00) != (hi << 8)) ? 1 : 0; // page crossed
+    return ((addr_abs & 0xFF00) != (hi << 8)) ? 1 : 0;
 }
 
 uint8_t CPU::ABY() {
     acc_mode = false;
-    uint16_t lo = read(PC); PC++;
-    uint16_t hi = read(PC); PC++;
+    uint16_t lo = cpuRead(PC); PC++;
+    uint16_t hi = cpuRead(PC); PC++;
     addr_abs = ((hi << 8) | lo) + Y;
     return ((addr_abs & 0xFF00) != (hi << 8)) ? 1 : 0;
 }
 
 uint8_t CPU::IND() {
     acc_mode = false;
-    uint16_t ptr_lo = read(PC); PC++;
-    uint16_t ptr_hi = read(PC); PC++;
+    uint16_t ptr_lo = cpuRead(PC); PC++;
+    uint16_t ptr_hi = cpuRead(PC); PC++;
     uint16_t ptr = (ptr_hi << 8) | ptr_lo;
 
-    if (ptr_lo == 0x00FF) // reproduce the famous page-boundary hardware bug
-        addr_abs = (read(ptr & 0xFF00) << 8) | read(ptr);
+    if (ptr_lo == 0x00FF)
+        addr_abs = (cpuRead(ptr & 0xFF00) << 8) | cpuRead(ptr);
     else
-        addr_abs = (read(ptr + 1) << 8) | read(ptr);
+        addr_abs = (cpuRead(ptr + 1) << 8) | cpuRead(ptr);
     return 0;
 }
 
 uint8_t CPU::IZX() {
     acc_mode = false;
-    uint16_t t = read(PC); PC++;
-    uint16_t lo = read((uint16_t)(t + X) & 0x00FF);
-    uint16_t hi = read((uint16_t)(t + X + 1) & 0x00FF);
+    uint16_t t = cpuRead(PC); PC++;
+    uint16_t lo = cpuRead((uint16_t)(t + X) & 0x00FF);
+    uint16_t hi = cpuRead((uint16_t)(t + X + 1) & 0x00FF);
     addr_abs = (hi << 8) | lo;
     return 0;
 }
 
 uint8_t CPU::IZY() {
     acc_mode = false;
-    uint16_t t = read(PC); PC++;
-    uint16_t lo = read(t & 0x00FF);
-    uint16_t hi = read((t + 1) & 0x00FF);
+    uint16_t t = cpuRead(PC); PC++;
+    uint16_t lo = cpuRead(t & 0x00FF);
+    uint16_t hi = cpuRead((t + 1) & 0x00FF);
     addr_abs = ((hi << 8) | lo) + Y;
     return ((addr_abs & 0xFF00) != (hi << 8)) ? 1 : 0;
 }
@@ -118,7 +119,7 @@ uint8_t CPU::ADC() {
     SetFlag(V, (~((uint16_t)A ^ (uint16_t)fetched) & ((uint16_t)A ^ temp)) & 0x0080);
     SetFlag(N, temp & 0x0080);
     A = temp & 0x00FF;
-    return 1; // may need extra cycle from addressing mode
+    return 1;
 }
 
 uint8_t CPU::AND() {
@@ -136,7 +137,7 @@ uint8_t CPU::ASL() {
     SetFlag(Z, (temp & 0x00FF) == 0x00);
     SetFlag(N, temp & 0x0080);
     if (acc_mode) A = temp & 0x00FF;
-    else          write(addr_abs, temp & 0x00FF);
+    else          cpuWrite(addr_abs, temp & 0x00FF);
     return 0;
 }
 
@@ -213,15 +214,15 @@ uint8_t CPU::BRK() {
     PC++;
     SetFlag(I, 1);
 
-    write(0x0100 + SP, (PC >> 8) & 0x00FF); SP--;
-    write(0x0100 + SP, PC & 0x00FF);        SP--;
+    cpuWrite(0x0100 + SP, (PC >> 8) & 0x00FF); SP--;
+    cpuWrite(0x0100 + SP, PC & 0x00FF);        SP--;
 
     SetFlag(B, 1);
-    write(0x0100 + SP, status);
+    cpuWrite(0x0100 + SP, status);
     SetFlag(B, 0);
     SP--;
 
-    PC = (uint16_t)read(0xFFFE) | ((uint16_t)read(0xFFFF) << 8);
+    PC = (uint16_t)cpuRead(0xFFFE) | ((uint16_t)cpuRead(0xFFFF) << 8);
     return 0;
 }
 
@@ -280,7 +281,7 @@ uint8_t CPU::CPY() {
 uint8_t CPU::DEC() {
     fetch();
     uint16_t temp = fetched - 1;
-    write(addr_abs, temp & 0x00FF);
+    cpuWrite(addr_abs, temp & 0x00FF);
     SetFlag(Z, (temp & 0x00FF) == 0x0000);
     SetFlag(N, temp & 0x0080);
     return 0;
@@ -300,7 +301,7 @@ uint8_t CPU::EOR() {
 uint8_t CPU::INC() {
     fetch();
     uint16_t temp = fetched + 1;
-    write(addr_abs, temp & 0x00FF);
+    cpuWrite(addr_abs, temp & 0x00FF);
     SetFlag(Z, (temp & 0x00FF) == 0x0000);
     SetFlag(N, temp & 0x0080);
     return 0;
@@ -313,8 +314,8 @@ uint8_t CPU::JMP() { PC = addr_abs; return 0; }
 
 uint8_t CPU::JSR() {
     PC--;
-    write(0x0100 + SP, (PC >> 8) & 0x00FF); SP--;
-    write(0x0100 + SP, PC & 0x00FF);        SP--;
+    cpuWrite(0x0100 + SP, (PC >> 8) & 0x00FF); SP--;
+    cpuWrite(0x0100 + SP, PC & 0x00FF);        SP--;
     PC = addr_abs;
     return 0;
 }
@@ -350,11 +351,11 @@ uint8_t CPU::LSR() {
     SetFlag(Z, (temp & 0x00FF) == 0x0000);
     SetFlag(N, temp & 0x0080);
     if (acc_mode) A = temp & 0x00FF;
-    else          write(addr_abs, temp & 0x00FF);
+    else          cpuWrite(addr_abs, temp & 0x00FF);
     return 0;
 }
 
-uint8_t CPU::NOP() { return 0; }
+uint8_t CPU::NOP() { return 1; } // 1 lets abs,X illegal NOPs pick up the addressing mode's page-cross cycle; official NOP (IMP) is unaffected since IMP always returns 0
 
 uint8_t CPU::ORA() {
     fetch();
@@ -365,23 +366,23 @@ uint8_t CPU::ORA() {
 }
 
 uint8_t CPU::PHA() {
-    write(0x0100 + SP, A);
+    cpuWrite(0x0100 + SP, A);
     SP--;
     return 0;
 }
 
 uint8_t CPU::PHP() {
-    // B and U are pushed as 1, but do not persist as real CPU state
-    write(0x0100 + SP, status | B | U);
-    SetFlag(B, 0);
-    SetFlag(U, 0);
+    // B and U are forced to 1 in the pushed byte, but that's purely a
+    // property of the byte on the stack - the live status register's own
+    // B/U bits are untouched.
+    cpuWrite(0x0100 + SP, status | B | U);
     SP--;
     return 0;
 }
 
 uint8_t CPU::PLA() {
     SP++;
-    A = read(0x0100 + SP);
+    A = cpuRead(0x0100 + SP);
     SetFlag(Z, A == 0x00);
     SetFlag(N, A & 0x80);
     return 0;
@@ -389,8 +390,11 @@ uint8_t CPU::PLA() {
 
 uint8_t CPU::PLP() {
     SP++;
-    status = read(0x0100 + SP);
-    SetFlag(U, 1); // unused bit always reads as 1
+    uint8_t pulled = cpuRead(0x0100 + SP);
+    // Real hardware ignores bits 4 (B) and 5 (U) of the pulled byte - the
+    // live status register keeps whatever it already had for those two.
+    status = (uint8_t)((pulled & ~(B | U)) | (status & (B | U)));
+    SetFlag(U, 1); // always reads as 1 regardless
     return 0;
 }
 
@@ -401,7 +405,7 @@ uint8_t CPU::ROL() {
     SetFlag(Z, (temp & 0x00FF) == 0x0000);
     SetFlag(N, temp & 0x0080);
     if (acc_mode) A = temp & 0x00FF;
-    else          write(addr_abs, temp & 0x00FF);
+    else          cpuWrite(addr_abs, temp & 0x00FF);
     return 0;
 }
 
@@ -412,35 +416,35 @@ uint8_t CPU::ROR() {
     SetFlag(Z, (temp & 0x00FF) == 0x0000);
     SetFlag(N, temp & 0x0080);
     if (acc_mode) A = temp & 0x00FF;
-    else          write(addr_abs, temp & 0x00FF);
+    else          cpuWrite(addr_abs, temp & 0x00FF);
     return 0;
 }
 
 uint8_t CPU::RTI() {
     SP++;
-    status = read(0x0100 + SP);
-    status &= ~B;
-    status &= ~U;
+    uint8_t pulled = cpuRead(0x0100 + SP);
+    // Same rule as PLP: bits 4 (B) and 5 (U) of the pulled byte are ignored.
+    status = (uint8_t)((pulled & ~(B | U)) | (status & (B | U)));
+    SetFlag(U, 1);
 
     SP++;
-    PC = (uint16_t)read(0x0100 + SP);
+    PC = (uint16_t)cpuRead(0x0100 + SP);
     SP++;
-    PC |= (uint16_t)read(0x0100 + SP) << 8;
+    PC |= (uint16_t)cpuRead(0x0100 + SP) << 8;
     return 0;
 }
 
 uint8_t CPU::RTS() {
     SP++;
-    PC = (uint16_t)read(0x0100 + SP);
+    PC = (uint16_t)cpuRead(0x0100 + SP);
     SP++;
-    PC |= (uint16_t)read(0x0100 + SP) << 8;
+    PC |= (uint16_t)cpuRead(0x0100 + SP) << 8;
     PC++;
     return 0;
 }
 
 uint8_t CPU::SBC() {
     fetch();
-    // SBC is ADC with the operand bitwise-inverted
     uint16_t value = ((uint16_t)fetched) ^ 0x00FF;
     uint16_t temp = (uint16_t)A + value + (uint16_t)GetFlag(C);
     SetFlag(C, temp & 0xFF00);
@@ -455,24 +459,223 @@ uint8_t CPU::SEC() { SetFlag(C, true); return 0; }
 uint8_t CPU::SED() { SetFlag(D, true); return 0; }
 uint8_t CPU::SEI() { SetFlag(I, true); return 0; }
 
-uint8_t CPU::STA() { write(addr_abs, A); return 0; }
-uint8_t CPU::STX() { write(addr_abs, X); return 0; }
-uint8_t CPU::STY() { write(addr_abs, Y); return 0; }
+uint8_t CPU::STA() { cpuWrite(addr_abs, A); return 0; }
+uint8_t CPU::STX() { cpuWrite(addr_abs, X); return 0; }
+uint8_t CPU::STY() { cpuWrite(addr_abs, Y); return 0; }
 
 uint8_t CPU::TAX() { X = A;  SetFlag(Z, X == 0x00); SetFlag(N, X & 0x80); return 0; }
 uint8_t CPU::TAY() { Y = A;  SetFlag(Z, Y == 0x00); SetFlag(N, Y & 0x80); return 0; }
 uint8_t CPU::TSX() { X = SP; SetFlag(Z, X == 0x00); SetFlag(N, X & 0x80); return 0; }
 uint8_t CPU::TXA() { A = X;  SetFlag(Z, A == 0x00); SetFlag(N, A & 0x80); return 0; }
-uint8_t CPU::TXS() { SP = X; return 0; } // no flags affected
+uint8_t CPU::TXS() { SP = X; return 0; }
 uint8_t CPU::TYA() { A = Y;  SetFlag(Z, A == 0x00); SetFlag(N, A & 0x80); return 0; }
 
-uint8_t CPU::XXX() { return 0; } // illegal/undocumented opcode placeholder
+uint8_t CPU::XXX() { return 0; } // JAM/KIL opcodes: real hardware freezes; we just no-op to avoid hanging
+
+// ======================= Illegal / Undocumented Opcodes =======================
+// These aren't in any official reference, but real games use several of them
+// (LAX/SAX especially), and nestest's extended log exercises all of them. The
+// combo ones (SLO/RLA/SRE/RRA/DCP/ISC) are literally "do the read-modify-write
+// op, then feed the result into the usual accumulator op" - the CPU's internal
+// data path does both because of how the decode logic overlaps, not because
+// anyone designed it that way.
+
+uint8_t CPU::LAX() {
+    fetch();
+    A = fetched;
+    X = fetched;
+    SetFlag(Z, A == 0x00);
+    SetFlag(N, A & 0x80);
+    return 1; // some addressing modes have a page-cross penalty
+}
+
+uint8_t CPU::SAX() {
+    uint8_t value = A & X;
+    cpuWrite(addr_abs, value);
+    return 0; // no flags affected, no operand fetch (this is a store)
+}
+
+uint8_t CPU::DCP() {
+    fetch();
+    uint8_t temp = fetched - 1;
+    cpuWrite(addr_abs, temp);
+    // ...then CMP against the decremented value
+    uint16_t cmp = (uint16_t)A - (uint16_t)temp;
+    SetFlag(C, A >= temp);
+    SetFlag(Z, (cmp & 0x00FF) == 0x0000);
+    SetFlag(N, cmp & 0x0080);
+    return 0;
+}
+
+uint8_t CPU::ISC() {
+    fetch();
+    uint8_t temp = fetched + 1;
+    cpuWrite(addr_abs, temp);
+    // ...then SBC against the incremented value
+    uint16_t value = ((uint16_t)temp) ^ 0x00FF;
+    uint16_t sum = (uint16_t)A + value + (uint16_t)GetFlag(C);
+    SetFlag(C, sum & 0xFF00);
+    SetFlag(Z, (sum & 0x00FF) == 0);
+    SetFlag(V, (sum ^ (uint16_t)A) & (sum ^ value) & 0x0080);
+    SetFlag(N, sum & 0x0080);
+    A = sum & 0x00FF;
+    return 0;
+}
+
+uint8_t CPU::SLO() {
+    fetch();
+    uint16_t temp = (uint16_t)fetched << 1;
+    SetFlag(C, (temp & 0xFF00) > 0);
+    cpuWrite(addr_abs, temp & 0x00FF);
+    // ...then ORA with the shifted value
+    A = A | (temp & 0x00FF);
+    SetFlag(Z, A == 0x00);
+    SetFlag(N, A & 0x80);
+    return 0;
+}
+
+uint8_t CPU::RLA() {
+    fetch();
+    uint16_t temp = (uint16_t)(fetched << 1) | GetFlag(C);
+    SetFlag(C, temp & 0xFF00);
+    cpuWrite(addr_abs, temp & 0x00FF);
+    // ...then AND with the rotated value
+    A = A & (temp & 0x00FF);
+    SetFlag(Z, A == 0x00);
+    SetFlag(N, A & 0x80);
+    return 0;
+}
+
+uint8_t CPU::SRE() {
+    fetch();
+    SetFlag(C, fetched & 0x0001);
+    uint8_t temp = fetched >> 1;
+    cpuWrite(addr_abs, temp);
+    // ...then EOR with the shifted value
+    A = A ^ temp;
+    SetFlag(Z, A == 0x00);
+    SetFlag(N, A & 0x80);
+    return 0;
+}
+
+uint8_t CPU::RRA() {
+    fetch();
+    uint16_t rotated = ((uint16_t)GetFlag(C) << 7) | (fetched >> 1);
+    SetFlag(C, fetched & 0x01); // carry-out from the ROR step
+    cpuWrite(addr_abs, rotated & 0x00FF);
+    // ...then ADC with the rotated value (using the carry ROR just set)
+    uint8_t value = rotated & 0x00FF;
+    uint16_t sum = (uint16_t)A + (uint16_t)value + (uint16_t)GetFlag(C);
+    SetFlag(C, sum > 0x00FF); // final carry reflects the ADC, not the ROR
+    SetFlag(Z, (sum & 0x00FF) == 0);
+    SetFlag(V, (~((uint16_t)A ^ (uint16_t)value) & ((uint16_t)A ^ sum)) & 0x0080);
+    SetFlag(N, sum & 0x0080);
+    A = sum & 0x00FF;
+    return 0;
+}
+
+uint8_t CPU::ANC() {
+    fetch();
+    A = A & fetched;
+    SetFlag(Z, A == 0x00);
+    SetFlag(N, A & 0x80);
+    SetFlag(C, A & 0x80); // carry mirrors the sign bit, as if ASL had run
+    return 0;
+}
+
+uint8_t CPU::ALR() {
+    fetch();
+    A = A & fetched;
+    SetFlag(C, A & 0x01);
+    A = A >> 1;
+    SetFlag(Z, A == 0x00);
+    SetFlag(N, A & 0x80); // always 0 after a right shift, but set it properly anyway
+    return 0;
+}
+
+uint8_t CPU::ARR() {
+    fetch();
+    A = A & fetched;
+    A = (A >> 1) | (GetFlag(C) << 7);
+    SetFlag(Z, A == 0x00);
+    SetFlag(N, A & 0x80);
+    // Quirky flag behavior unique to this opcode:
+    SetFlag(C, A & 0x40);
+    SetFlag(V, ((A & 0x40) >> 6) ^ ((A & 0x20) >> 5));
+    return 0;
+}
+
+uint8_t CPU::AXS() {
+    fetch();
+    uint8_t anded = A & X;
+    uint16_t temp = (uint16_t)anded - (uint16_t)fetched;
+    SetFlag(C, anded >= fetched);
+    X = temp & 0x00FF;
+    SetFlag(Z, X == 0x00);
+    SetFlag(N, X & 0x80);
+    return 0;
+}
+
+// --- Unstable opcodes: real behavior depends on internal bus-conflict
+// timing that varies between chip revisions. These are the commonly-used
+// approximations (matches what most emulators do), not a guarantee of
+// bit-exact hardware match. ---
+
+uint8_t CPU::LXA() {
+    fetch();
+    A = X = fetched; // approximation; real hardware ANDs with an unstable constant first
+    SetFlag(Z, A == 0x00);
+    SetFlag(N, A & 0x80);
+    return 0;
+}
+
+uint8_t CPU::XAA() {
+    fetch();
+    A = X & fetched; // approximation; real hardware involves an unstable magic constant too
+    SetFlag(Z, A == 0x00);
+    SetFlag(N, A & 0x80);
+    return 0;
+}
+
+uint8_t CPU::SHA() {
+    uint8_t value = A & X & (uint8_t)((addr_abs >> 8) + 1);
+    cpuWrite(addr_abs, value);
+    return 0;
+}
+
+uint8_t CPU::TAS() {
+    SP = A & X;
+    uint8_t value = SP & (uint8_t)((addr_abs >> 8) + 1);
+    cpuWrite(addr_abs, value);
+    return 0;
+}
+
+uint8_t CPU::SHY() {
+    uint8_t value = Y & (uint8_t)((addr_abs >> 8) + 1);
+    cpuWrite(addr_abs, value);
+    return 0;
+}
+
+uint8_t CPU::SHX() {
+    uint8_t value = X & (uint8_t)((addr_abs >> 8) + 1);
+    cpuWrite(addr_abs, value);
+    return 0;
+}
+
+uint8_t CPU::LAS() {
+    fetch();
+    uint8_t temp = fetched & SP;
+    A = temp; X = temp; SP = temp;
+    SetFlag(Z, A == 0x00);
+    SetFlag(N, A & 0x80);
+    return 1;
+}
 
 // ============================ External Signals ==============================
 
 void CPU::clock() {
     if (cycles == 0) {
-        opcode = read(PC);
+        opcode = cpuRead(PC);
         SetFlag(U, true);
         PC++;
 
@@ -481,8 +684,6 @@ void CPU::clock() {
         uint8_t additional_cycle1 = (this->*lookup[opcode].addrmode)();
         uint8_t additional_cycle2 = (this->*lookup[opcode].operate)();
 
-        // Both the addressing mode AND the opcode must agree an extra
-        // cycle is possible (page-crossing penalty) before it's added.
         cycles += (additional_cycle1 & additional_cycle2);
 
         SetFlag(U, true);
@@ -494,11 +695,11 @@ void CPU::clock() {
 void CPU::reset() {
     A = 0; X = 0; Y = 0;
     SP = 0xFD;
-    status = 0x00 | U;
+    status = 0x00 | U | I; // hardware sets interrupt-disable on reset
 
     addr_abs = 0xFFFC;
-    uint16_t lo = read(addr_abs);
-    uint16_t hi = read(addr_abs + 1);
+    uint16_t lo = cpuRead(addr_abs);
+    uint16_t hi = cpuRead(addr_abs + 1);
     PC = (hi << 8) | lo;
 
     addr_rel = 0x0000;
@@ -506,22 +707,22 @@ void CPU::reset() {
     fetched = 0x00;
     acc_mode = false;
 
-    cycles = 8; // reset takes a fixed number of cycles
+    cycles = 7; // real hardware reset sequence takes 7 clock cycles
 }
 
 void CPU::irq() {
     if (GetFlag(I) == 0) {
-        write(0x0100 + SP, (PC >> 8) & 0x00FF); SP--;
-        write(0x0100 + SP, PC & 0x00FF);        SP--;
+        cpuWrite(0x0100 + SP, (PC >> 8) & 0x00FF); SP--;
+        cpuWrite(0x0100 + SP, PC & 0x00FF);        SP--;
 
         SetFlag(B, 0);
         SetFlag(U, 1);
         SetFlag(I, 1);
-        write(0x0100 + SP, status); SP--;
+        cpuWrite(0x0100 + SP, status); SP--;
 
         addr_abs = 0xFFFE;
-        uint16_t lo = read(addr_abs);
-        uint16_t hi = read(addr_abs + 1);
+        uint16_t lo = cpuRead(addr_abs);
+        uint16_t hi = cpuRead(addr_abs + 1);
         PC = (hi << 8) | lo;
 
         cycles = 7;
@@ -529,110 +730,213 @@ void CPU::irq() {
 }
 
 void CPU::nmi() {
-    write(0x0100 + SP, (PC >> 8) & 0x00FF); SP--;
-    write(0x0100 + SP, PC & 0x00FF);        SP--;
+    cpuWrite(0x0100 + SP, (PC >> 8) & 0x00FF); SP--;
+    cpuWrite(0x0100 + SP, PC & 0x00FF);        SP--;
 
     SetFlag(B, 0);
     SetFlag(U, 1);
     SetFlag(I, 1);
-    write(0x0100 + SP, status); SP--;
+    cpuWrite(0x0100 + SP, status); SP--;
 
     addr_abs = 0xFFFA;
-    uint16_t lo = read(addr_abs);
-    uint16_t hi = read(addr_abs + 1);
+    uint16_t lo = cpuRead(addr_abs);
+    uint16_t hi = cpuRead(addr_abs + 1);
     PC = (hi << 8) | lo;
 
     cycles = 8;
 }
 
+// ============================ Disassembly (peek-only) ========================
+// Mirrors the addressing-mode logic above but never advances PC, never calls
+// fetch(), and never writes anything - pure inspection for debuggers/logging.
+// Format loosely follows Nintendulator-style logs (what nestest.log uses).
+
+CPU::Disasm CPU::DisassembleAt(uint16_t addr) {
+    uint8_t op = cpuRead(addr);
+    const INSTRUCTION& instr = lookup[op];
+    uint8_t length = 1;
+    char buf[64] = {0};
+
+    if (instr.addrmode == &CPU::IMP) {
+        length = 1;
+    } else if (instr.addrmode == &CPU::ACC) {
+        length = 1;
+        std::snprintf(buf, sizeof(buf), "A");
+    } else if (instr.addrmode == &CPU::IMM) {
+        uint8_t v = cpuRead(addr + 1);
+        length = 2;
+        std::snprintf(buf, sizeof(buf), "#$%02X", v);
+    } else if (instr.addrmode == &CPU::ZP0) {
+        uint8_t zp = cpuRead(addr + 1);
+        uint8_t val = cpuRead(zp);
+        length = 2;
+        std::snprintf(buf, sizeof(buf), "$%02X = %02X", zp, val);
+    } else if (instr.addrmode == &CPU::ZPX) {
+        uint8_t zp = cpuRead(addr + 1);
+        uint8_t eff = (uint8_t)(zp + X);
+        uint8_t val = cpuRead(eff);
+        length = 2;
+        std::snprintf(buf, sizeof(buf), "$%02X,X @ %02X = %02X", zp, eff, val);
+    } else if (instr.addrmode == &CPU::ZPY) {
+        uint8_t zp = cpuRead(addr + 1);
+        uint8_t eff = (uint8_t)(zp + Y);
+        uint8_t val = cpuRead(eff);
+        length = 2;
+        std::snprintf(buf, sizeof(buf), "$%02X,Y @ %02X = %02X", zp, eff, val);
+    } else if (instr.addrmode == &CPU::REL) {
+        int8_t off = (int8_t)cpuRead(addr + 1);
+        uint16_t target = (uint16_t)(addr + 2 + off);
+        length = 2;
+        std::snprintf(buf, sizeof(buf), "$%04X", target);
+    } else if (instr.addrmode == &CPU::ABS) {
+        uint16_t lo = cpuRead(addr + 1), hi = cpuRead(addr + 2);
+        uint16_t a16 = (uint16_t)((hi << 8) | lo);
+        length = 3;
+        if (instr.name == "JMP" || instr.name == "JSR")
+            std::snprintf(buf, sizeof(buf), "$%04X", a16);
+        else
+            std::snprintf(buf, sizeof(buf), "$%04X = %02X", a16, cpuRead(a16));
+    } else if (instr.addrmode == &CPU::ABX) {
+        uint16_t lo = cpuRead(addr + 1), hi = cpuRead(addr + 2);
+        uint16_t base = (uint16_t)((hi << 8) | lo);
+        uint16_t eff = (uint16_t)(base + X);
+        length = 3;
+        std::snprintf(buf, sizeof(buf), "$%04X,X @ %04X = %02X", base, eff, cpuRead(eff));
+    } else if (instr.addrmode == &CPU::ABY) {
+        uint16_t lo = cpuRead(addr + 1), hi = cpuRead(addr + 2);
+        uint16_t base = (uint16_t)((hi << 8) | lo);
+        uint16_t eff = (uint16_t)(base + Y);
+        length = 3;
+        std::snprintf(buf, sizeof(buf), "$%04X,Y @ %04X = %02X", base, eff, cpuRead(eff));
+    } else if (instr.addrmode == &CPU::IND) {
+        uint16_t ptr_lo = cpuRead(addr + 1), ptr_hi = cpuRead(addr + 2);
+        uint16_t ptr = (uint16_t)((ptr_hi << 8) | ptr_lo);
+        uint16_t eff;
+        if ((ptr & 0x00FF) == 0x00FF)
+            eff = (uint16_t)((cpuRead(ptr & 0xFF00) << 8) | cpuRead(ptr)); // page-boundary bug
+        else
+            eff = (uint16_t)((cpuRead(ptr + 1) << 8) | cpuRead(ptr));
+        length = 3;
+        std::snprintf(buf, sizeof(buf), "($%04X) = %04X", ptr, eff);
+    } else if (instr.addrmode == &CPU::IZX) {
+        uint8_t t = cpuRead(addr + 1);
+        uint8_t zp = (uint8_t)(t + X);
+        uint16_t lo = cpuRead(zp), hi = cpuRead((uint8_t)(zp + 1));
+        uint16_t eff = (uint16_t)((hi << 8) | lo);
+        length = 2;
+        std::snprintf(buf, sizeof(buf), "($%02X,X) @ %02X = %04X = %02X", t, zp, eff, cpuRead(eff));
+    } else if (instr.addrmode == &CPU::IZY) {
+        uint8_t t = cpuRead(addr + 1);
+        uint16_t lo = cpuRead(t), hi = cpuRead((uint8_t)(t + 1));
+        uint16_t base = (uint16_t)((hi << 8) | lo);
+        uint16_t eff = (uint16_t)(base + Y);
+        length = 2;
+        std::snprintf(buf, sizeof(buf), "($%02X),Y = %04X @ %04X = %02X", t, base, eff, cpuRead(eff));
+    }
+
+    std::string text = instr.name;
+    if (buf[0] != '\0') { text += " "; text += buf; }
+    return { text, length };
+}
+
 // ============================== Opcode Table =================================
-// 256 entries. Official opcodes carry their real mnemonic, addressing mode,
-// and cycle count (matches the NESdev reference exactly). Unused/illegal slots
-// are stubbed as {"???", XXX, IMP, 2} — fill these in later once official
-// opcodes pass nestest, if you want illegal-opcode support too.
 
 CPU::CPU() {
-    using c = CPU;
     lookup = { {
-        // 0x00
-        {"BRK",&c::BRK,&c::IMP,7},{"ORA",&c::ORA,&c::IZX,6},{"???",&c::XXX,&c::IMP,2},{"???",&c::XXX,&c::IMP,8},
-        {"???",&c::XXX,&c::IMP,3},{"ORA",&c::ORA,&c::ZP0,3},{"ASL",&c::ASL,&c::ZP0,5},{"???",&c::XXX,&c::IMP,5},
-        {"PHP",&c::PHP,&c::IMP,3},{"ORA",&c::ORA,&c::IMM,2},{"ASL",&c::ASL,&c::ACC,2},{"???",&c::XXX,&c::IMP,2},
-        {"???",&c::XXX,&c::IMP,4},{"ORA",&c::ORA,&c::ABS,4},{"ASL",&c::ASL,&c::ABS,6},{"???",&c::XXX,&c::IMP,6},
-        // 0x10
-        {"BPL",&c::BPL,&c::REL,2},{"ORA",&c::ORA,&c::IZY,5},{"???",&c::XXX,&c::IMP,2},{"???",&c::XXX,&c::IMP,8},
-        {"???",&c::XXX,&c::IMP,4},{"ORA",&c::ORA,&c::ZPX,4},{"ASL",&c::ASL,&c::ZPX,6},{"???",&c::XXX,&c::IMP,6},
-        {"CLC",&c::CLC,&c::IMP,2},{"ORA",&c::ORA,&c::ABY,4},{"???",&c::XXX,&c::IMP,2},{"???",&c::XXX,&c::IMP,7},
-        {"???",&c::XXX,&c::IMP,4},{"ORA",&c::ORA,&c::ABX,4},{"ASL",&c::ASL,&c::ABX,7},{"???",&c::XXX,&c::IMP,7},
-        // 0x20
-        {"JSR",&c::JSR,&c::ABS,6},{"AND",&c::AND,&c::IZX,6},{"???",&c::XXX,&c::IMP,2},{"???",&c::XXX,&c::IMP,8},
-        {"BIT",&c::BIT,&c::ZP0,3},{"AND",&c::AND,&c::ZP0,3},{"ROL",&c::ROL,&c::ZP0,5},{"???",&c::XXX,&c::IMP,5},
-        {"PLP",&c::PLP,&c::IMP,4},{"AND",&c::AND,&c::IMM,2},{"ROL",&c::ROL,&c::ACC,2},{"???",&c::XXX,&c::IMP,2},
-        {"BIT",&c::BIT,&c::ABS,4},{"AND",&c::AND,&c::ABS,4},{"ROL",&c::ROL,&c::ABS,6},{"???",&c::XXX,&c::IMP,6},
-        // 0x30
-        {"BMI",&c::BMI,&c::REL,2},{"AND",&c::AND,&c::IZY,5},{"???",&c::XXX,&c::IMP,2},{"???",&c::XXX,&c::IMP,8},
-        {"???",&c::XXX,&c::IMP,4},{"AND",&c::AND,&c::ZPX,4},{"ROL",&c::ROL,&c::ZPX,6},{"???",&c::XXX,&c::IMP,6},
-        {"SEC",&c::SEC,&c::IMP,2},{"AND",&c::AND,&c::ABY,4},{"???",&c::XXX,&c::IMP,2},{"???",&c::XXX,&c::IMP,7},
-        {"???",&c::XXX,&c::IMP,4},{"AND",&c::AND,&c::ABX,4},{"ROL",&c::ROL,&c::ABX,7},{"???",&c::XXX,&c::IMP,7},
-        // 0x40
-        {"RTI",&c::RTI,&c::IMP,6},{"EOR",&c::EOR,&c::IZX,6},{"???",&c::XXX,&c::IMP,2},{"???",&c::XXX,&c::IMP,8},
-        {"???",&c::XXX,&c::IMP,3},{"EOR",&c::EOR,&c::ZP0,3},{"LSR",&c::LSR,&c::ZP0,5},{"???",&c::XXX,&c::IMP,5},
-        {"PHA",&c::PHA,&c::IMP,3},{"EOR",&c::EOR,&c::IMM,2},{"LSR",&c::LSR,&c::ACC,2},{"???",&c::XXX,&c::IMP,2},
-        {"JMP",&c::JMP,&c::ABS,3},{"EOR",&c::EOR,&c::ABS,4},{"LSR",&c::LSR,&c::ABS,6},{"???",&c::XXX,&c::IMP,6},
-        // 0x50
-        {"BVC",&c::BVC,&c::REL,2},{"EOR",&c::EOR,&c::IZY,5},{"???",&c::XXX,&c::IMP,2},{"???",&c::XXX,&c::IMP,8},
-        {"???",&c::XXX,&c::IMP,4},{"EOR",&c::EOR,&c::ZPX,4},{"LSR",&c::LSR,&c::ZPX,6},{"???",&c::XXX,&c::IMP,6},
-        {"CLI",&c::CLI,&c::IMP,2},{"EOR",&c::EOR,&c::ABY,4},{"???",&c::XXX,&c::IMP,2},{"???",&c::XXX,&c::IMP,7},
-        {"???",&c::XXX,&c::IMP,4},{"EOR",&c::EOR,&c::ABX,4},{"LSR",&c::LSR,&c::ABX,7},{"???",&c::XXX,&c::IMP,7},
-        // 0x60
-        {"RTS",&c::RTS,&c::IMP,6},{"ADC",&c::ADC,&c::IZX,6},{"???",&c::XXX,&c::IMP,2},{"???",&c::XXX,&c::IMP,8},
-        {"???",&c::XXX,&c::IMP,3},{"ADC",&c::ADC,&c::ZP0,3},{"ROR",&c::ROR,&c::ZP0,5},{"???",&c::XXX,&c::IMP,5},
-        {"PLA",&c::PLA,&c::IMP,4},{"ADC",&c::ADC,&c::IMM,2},{"ROR",&c::ROR,&c::ACC,2},{"???",&c::XXX,&c::IMP,2},
-        {"JMP",&c::JMP,&c::IND,5},{"ADC",&c::ADC,&c::ABS,4},{"ROR",&c::ROR,&c::ABS,6},{"???",&c::XXX,&c::IMP,6},
-        // 0x70
-        {"BVS",&c::BVS,&c::REL,2},{"ADC",&c::ADC,&c::IZY,5},{"???",&c::XXX,&c::IMP,2},{"???",&c::XXX,&c::IMP,8},
-        {"???",&c::XXX,&c::IMP,4},{"ADC",&c::ADC,&c::ZPX,4},{"ROR",&c::ROR,&c::ZPX,6},{"???",&c::XXX,&c::IMP,6},
-        {"SEI",&c::SEI,&c::IMP,2},{"ADC",&c::ADC,&c::ABY,4},{"???",&c::XXX,&c::IMP,2},{"???",&c::XXX,&c::IMP,7},
-        {"???",&c::XXX,&c::IMP,4},{"ADC",&c::ADC,&c::ABX,4},{"ROR",&c::ROR,&c::ABX,7},{"???",&c::XXX,&c::IMP,7},
-        // 0x80
-        {"???",&c::XXX,&c::IMP,2},{"STA",&c::STA,&c::IZX,6},{"???",&c::XXX,&c::IMP,2},{"???",&c::XXX,&c::IMP,6},
-        {"STY",&c::STY,&c::ZP0,3},{"STA",&c::STA,&c::ZP0,3},{"STX",&c::STX,&c::ZP0,3},{"???",&c::XXX,&c::IMP,3},
-        {"DEY",&c::DEY,&c::IMP,2},{"???",&c::XXX,&c::IMP,2},{"TXA",&c::TXA,&c::IMP,2},{"???",&c::XXX,&c::IMP,2},
-        {"STY",&c::STY,&c::ABS,4},{"STA",&c::STA,&c::ABS,4},{"STX",&c::STX,&c::ABS,4},{"???",&c::XXX,&c::IMP,4},
-        // 0x90
-        {"BCC",&c::BCC,&c::REL,2},{"STA",&c::STA,&c::IZY,6},{"???",&c::XXX,&c::IMP,2},{"???",&c::XXX,&c::IMP,6},
-        {"STY",&c::STY,&c::ZPX,4},{"STA",&c::STA,&c::ZPX,4},{"STX",&c::STX,&c::ZPY,4},{"???",&c::XXX,&c::IMP,4},
-        {"TYA",&c::TYA,&c::IMP,2},{"STA",&c::STA,&c::ABY,5},{"TXS",&c::TXS,&c::IMP,2},{"???",&c::XXX,&c::IMP,5},
-        {"???",&c::XXX,&c::IMP,5},{"STA",&c::STA,&c::ABX,5},{"???",&c::XXX,&c::IMP,5},{"???",&c::XXX,&c::IMP,5},
-        // 0xA0
-        {"LDY",&c::LDY,&c::IMM,2},{"LDA",&c::LDA,&c::IZX,6},{"LDX",&c::LDX,&c::IMM,2},{"???",&c::XXX,&c::IMP,6},
-        {"LDY",&c::LDY,&c::ZP0,3},{"LDA",&c::LDA,&c::ZP0,3},{"LDX",&c::LDX,&c::ZP0,3},{"???",&c::XXX,&c::IMP,3},
-        {"TAY",&c::TAY,&c::IMP,2},{"LDA",&c::LDA,&c::IMM,2},{"TAX",&c::TAX,&c::IMP,2},{"???",&c::XXX,&c::IMP,2},
-        {"LDY",&c::LDY,&c::ABS,4},{"LDA",&c::LDA,&c::ABS,4},{"LDX",&c::LDX,&c::ABS,4},{"???",&c::XXX,&c::IMP,4},
-        // 0xB0
-        {"BCS",&c::BCS,&c::REL,2},{"LDA",&c::LDA,&c::IZY,5},{"???",&c::XXX,&c::IMP,2},{"???",&c::XXX,&c::IMP,5},
-        {"LDY",&c::LDY,&c::ZPX,4},{"LDA",&c::LDA,&c::ZPX,4},{"LDX",&c::LDX,&c::ZPY,4},{"???",&c::XXX,&c::IMP,4},
-        {"CLV",&c::CLV,&c::IMP,2},{"LDA",&c::LDA,&c::ABY,4},{"TSX",&c::TSX,&c::IMP,2},{"???",&c::XXX,&c::IMP,4},
-        {"LDY",&c::LDY,&c::ABX,4},{"LDA",&c::LDA,&c::ABX,4},{"LDX",&c::LDX,&c::ABY,4},{"???",&c::XXX,&c::IMP,4},
-        // 0xC0
-        {"CPY",&c::CPY,&c::IMM,2},{"CMP",&c::CMP,&c::IZX,6},{"???",&c::XXX,&c::IMP,2},{"???",&c::XXX,&c::IMP,8},
-        {"CPY",&c::CPY,&c::ZP0,3},{"CMP",&c::CMP,&c::ZP0,3},{"DEC",&c::DEC,&c::ZP0,5},{"???",&c::XXX,&c::IMP,5},
-        {"INY",&c::INY,&c::IMP,2},{"CMP",&c::CMP,&c::IMM,2},{"DEX",&c::DEX,&c::IMP,2},{"???",&c::XXX,&c::IMP,2},
-        {"CPY",&c::CPY,&c::ABS,4},{"CMP",&c::CMP,&c::ABS,4},{"DEC",&c::DEC,&c::ABS,6},{"???",&c::XXX,&c::IMP,6},
-        // 0xD0
-        {"BNE",&c::BNE,&c::REL,2},{"CMP",&c::CMP,&c::IZY,5},{"???",&c::XXX,&c::IMP,2},{"???",&c::XXX,&c::IMP,8},
-        {"???",&c::XXX,&c::IMP,4},{"CMP",&c::CMP,&c::ZPX,4},{"DEC",&c::DEC,&c::ZPX,6},{"???",&c::XXX,&c::IMP,6},
-        {"CLD",&c::CLD,&c::IMP,2},{"CMP",&c::CMP,&c::ABY,4},{"???",&c::XXX,&c::IMP,2},{"???",&c::XXX,&c::IMP,7},
-        {"???",&c::XXX,&c::IMP,4},{"CMP",&c::CMP,&c::ABX,4},{"DEC",&c::DEC,&c::ABX,7},{"???",&c::XXX,&c::IMP,7},
-        // 0xE0
-        {"CPX",&c::CPX,&c::IMM,2},{"SBC",&c::SBC,&c::IZX,6},{"???",&c::XXX,&c::IMP,2},{"???",&c::XXX,&c::IMP,8},
-        {"CPX",&c::CPX,&c::ZP0,3},{"SBC",&c::SBC,&c::ZP0,3},{"INC",&c::INC,&c::ZP0,5},{"???",&c::XXX,&c::IMP,5},
-        {"INX",&c::INX,&c::IMP,2},{"SBC",&c::SBC,&c::IMM,2},{"NOP",&c::NOP,&c::IMP,2},{"???",&c::XXX,&c::IMP,2},
-        {"CPX",&c::CPX,&c::ABS,4},{"SBC",&c::SBC,&c::ABS,4},{"INC",&c::INC,&c::ABS,6},{"???",&c::XXX,&c::IMP,6},
-        // 0xF0
-        {"BEQ",&c::BEQ,&c::REL,2},{"SBC",&c::SBC,&c::IZY,5},{"???",&c::XXX,&c::IMP,2},{"???",&c::XXX,&c::IMP,8},
-        {"???",&c::XXX,&c::IMP,4},{"SBC",&c::SBC,&c::ZPX,4},{"INC",&c::INC,&c::ZPX,6},{"???",&c::XXX,&c::IMP,6},
-        {"SED",&c::SED,&c::IMP,2},{"SBC",&c::SBC,&c::ABY,4},{"???",&c::XXX,&c::IMP,2},{"???",&c::XXX,&c::IMP,7},
-        {"???",&c::XXX,&c::IMP,4},{"SBC",&c::SBC,&c::ABX,4},{"INC",&c::INC,&c::ABX,7},{"???",&c::XXX,&c::IMP,7},
+        // 0x00-0x0F
+        {"BRK",&CPU::BRK,&CPU::IMP,7},{"ORA",&CPU::ORA,&CPU::IZX,6},{"???",&CPU::XXX,&CPU::IMP,2},{"SLO",&CPU::SLO,&CPU::IZX,8},
+        {"NOP",&CPU::NOP,&CPU::ZP0,3},{"ORA",&CPU::ORA,&CPU::ZP0,3},{"ASL",&CPU::ASL,&CPU::ZP0,5},{"SLO",&CPU::SLO,&CPU::ZP0,5},
+        {"PHP",&CPU::PHP,&CPU::IMP,3},{"ORA",&CPU::ORA,&CPU::IMM,2},{"ASL",&CPU::ASL,&CPU::ACC,2},{"ANC",&CPU::ANC,&CPU::IMM,2},
+        {"NOP",&CPU::NOP,&CPU::ABS,4},{"ORA",&CPU::ORA,&CPU::ABS,4},{"ASL",&CPU::ASL,&CPU::ABS,6},{"SLO",&CPU::SLO,&CPU::ABS,6},
+
+        // 0x10-0x1F
+        {"BPL",&CPU::BPL,&CPU::REL,2},{"ORA",&CPU::ORA,&CPU::IZY,5},{"???",&CPU::XXX,&CPU::IMP,2},{"SLO",&CPU::SLO,&CPU::IZY,8},
+        {"NOP",&CPU::NOP,&CPU::ZPX,4},{"ORA",&CPU::ORA,&CPU::ZPX,4},{"ASL",&CPU::ASL,&CPU::ZPX,6},{"SLO",&CPU::SLO,&CPU::ZPX,6},
+        {"CLC",&CPU::CLC,&CPU::IMP,2},{"ORA",&CPU::ORA,&CPU::ABY,4},{"NOP",&CPU::NOP,&CPU::IMP,2},{"SLO",&CPU::SLO,&CPU::ABY,7},
+        {"NOP",&CPU::NOP,&CPU::ABX,4},{"ORA",&CPU::ORA,&CPU::ABX,4},{"ASL",&CPU::ASL,&CPU::ABX,7},{"SLO",&CPU::SLO,&CPU::ABX,7},
+
+        // 0x20-0x2F
+        {"JSR",&CPU::JSR,&CPU::ABS,6},{"AND",&CPU::AND,&CPU::IZX,6},{"???",&CPU::XXX,&CPU::IMP,2},{"RLA",&CPU::RLA,&CPU::IZX,8},
+        {"BIT",&CPU::BIT,&CPU::ZP0,3},{"AND",&CPU::AND,&CPU::ZP0,3},{"ROL",&CPU::ROL,&CPU::ZP0,5},{"RLA",&CPU::RLA,&CPU::ZP0,5},
+        {"PLP",&CPU::PLP,&CPU::IMP,4},{"AND",&CPU::AND,&CPU::IMM,2},{"ROL",&CPU::ROL,&CPU::ACC,2},{"ANC",&CPU::ANC,&CPU::IMM,2},
+        {"BIT",&CPU::BIT,&CPU::ABS,4},{"AND",&CPU::AND,&CPU::ABS,4},{"ROL",&CPU::ROL,&CPU::ABS,6},{"RLA",&CPU::RLA,&CPU::ABS,6},
+
+        // 0x30-0x3F
+        {"BMI",&CPU::BMI,&CPU::REL,2},{"AND",&CPU::AND,&CPU::IZY,5},{"???",&CPU::XXX,&CPU::IMP,2},{"RLA",&CPU::RLA,&CPU::IZY,8},
+        {"NOP",&CPU::NOP,&CPU::ZPX,4},{"AND",&CPU::AND,&CPU::ZPX,4},{"ROL",&CPU::ROL,&CPU::ZPX,6},{"RLA",&CPU::RLA,&CPU::ZPX,6},
+        {"SEC",&CPU::SEC,&CPU::IMP,2},{"AND",&CPU::AND,&CPU::ABY,4},{"NOP",&CPU::NOP,&CPU::IMP,2},{"RLA",&CPU::RLA,&CPU::ABY,7},
+        {"NOP",&CPU::NOP,&CPU::ABX,4},{"AND",&CPU::AND,&CPU::ABX,4},{"ROL",&CPU::ROL,&CPU::ABX,7},{"RLA",&CPU::RLA,&CPU::ABX,7},
+
+        // 0x40-0x4F
+        {"RTI",&CPU::RTI,&CPU::IMP,6},{"EOR",&CPU::EOR,&CPU::IZX,6},{"???",&CPU::XXX,&CPU::IMP,2},{"SRE",&CPU::SRE,&CPU::IZX,8},
+        {"NOP",&CPU::NOP,&CPU::ZP0,3},{"EOR",&CPU::EOR,&CPU::ZP0,3},{"LSR",&CPU::LSR,&CPU::ZP0,5},{"SRE",&CPU::SRE,&CPU::ZP0,5},
+        {"PHA",&CPU::PHA,&CPU::IMP,3},{"EOR",&CPU::EOR,&CPU::IMM,2},{"LSR",&CPU::LSR,&CPU::ACC,2},{"ALR",&CPU::ALR,&CPU::IMM,2},
+        {"JMP",&CPU::JMP,&CPU::ABS,3},{"EOR",&CPU::EOR,&CPU::ABS,4},{"LSR",&CPU::LSR,&CPU::ABS,6},{"SRE",&CPU::SRE,&CPU::ABS,6},
+
+        // 0x50-0x5F
+        {"BVC",&CPU::BVC,&CPU::REL,2},{"EOR",&CPU::EOR,&CPU::IZY,5},{"???",&CPU::XXX,&CPU::IMP,2},{"SRE",&CPU::SRE,&CPU::IZY,8},
+        {"NOP",&CPU::NOP,&CPU::ZPX,4},{"EOR",&CPU::EOR,&CPU::ZPX,4},{"LSR",&CPU::LSR,&CPU::ZPX,6},{"SRE",&CPU::SRE,&CPU::ZPX,6},
+        {"CLI",&CPU::CLI,&CPU::IMP,2},{"EOR",&CPU::EOR,&CPU::ABY,4},{"NOP",&CPU::NOP,&CPU::IMP,2},{"SRE",&CPU::SRE,&CPU::ABY,7},
+        {"NOP",&CPU::NOP,&CPU::ABX,4},{"EOR",&CPU::EOR,&CPU::ABX,4},{"LSR",&CPU::LSR,&CPU::ABX,7},{"SRE",&CPU::SRE,&CPU::ABX,7},
+
+        // 0x60-0x6F
+        {"RTS",&CPU::RTS,&CPU::IMP,6},{"ADC",&CPU::ADC,&CPU::IZX,6},{"???",&CPU::XXX,&CPU::IMP,2},{"RRA",&CPU::RRA,&CPU::IZX,8},
+        {"NOP",&CPU::NOP,&CPU::ZP0,3},{"ADC",&CPU::ADC,&CPU::ZP0,3},{"ROR",&CPU::ROR,&CPU::ZP0,5},{"RRA",&CPU::RRA,&CPU::ZP0,5},
+        {"PLA",&CPU::PLA,&CPU::IMP,4},{"ADC",&CPU::ADC,&CPU::IMM,2},{"ROR",&CPU::ROR,&CPU::ACC,2},{"ARR",&CPU::ARR,&CPU::IMM,2},
+        {"JMP",&CPU::JMP,&CPU::IND,5},{"ADC",&CPU::ADC,&CPU::ABS,4},{"ROR",&CPU::ROR,&CPU::ABS,6},{"RRA",&CPU::RRA,&CPU::ABS,6},
+
+        // 0x70-0x7F
+        {"BVS",&CPU::BVS,&CPU::REL,2},{"ADC",&CPU::ADC,&CPU::IZY,5},{"???",&CPU::XXX,&CPU::IMP,2},{"RRA",&CPU::RRA,&CPU::IZY,8},
+        {"NOP",&CPU::NOP,&CPU::ZPX,4},{"ADC",&CPU::ADC,&CPU::ZPX,4},{"ROR",&CPU::ROR,&CPU::ZPX,6},{"RRA",&CPU::RRA,&CPU::ZPX,6},
+        {"SEI",&CPU::SEI,&CPU::IMP,2},{"ADC",&CPU::ADC,&CPU::ABY,4},{"NOP",&CPU::NOP,&CPU::IMP,2},{"RRA",&CPU::RRA,&CPU::ABY,7},
+        {"NOP",&CPU::NOP,&CPU::ABX,4},{"ADC",&CPU::ADC,&CPU::ABX,4},{"ROR",&CPU::ROR,&CPU::ABX,7},{"RRA",&CPU::RRA,&CPU::ABX,7},
+
+        // 0x80-0x8F
+        {"NOP",&CPU::NOP,&CPU::IMM,2},{"STA",&CPU::STA,&CPU::IZX,6},{"NOP",&CPU::NOP,&CPU::IMM,2},{"SAX",&CPU::SAX,&CPU::IZX,6},
+        {"STY",&CPU::STY,&CPU::ZP0,3},{"STA",&CPU::STA,&CPU::ZP0,3},{"STX",&CPU::STX,&CPU::ZP0,3},{"SAX",&CPU::SAX,&CPU::ZP0,3},
+        {"DEY",&CPU::DEY,&CPU::IMP,2},{"NOP",&CPU::NOP,&CPU::IMM,2},{"TXA",&CPU::TXA,&CPU::IMP,2},{"XAA",&CPU::XAA,&CPU::IMM,2},
+        {"STY",&CPU::STY,&CPU::ABS,4},{"STA",&CPU::STA,&CPU::ABS,4},{"STX",&CPU::STX,&CPU::ABS,4},{"SAX",&CPU::SAX,&CPU::ABS,4},
+
+        // 0x90-0x9F
+        {"BCC",&CPU::BCC,&CPU::REL,2},{"STA",&CPU::STA,&CPU::IZY,6},{"???",&CPU::XXX,&CPU::IMP,2},{"SHA",&CPU::SHA,&CPU::IZY,6},
+        {"STY",&CPU::STY,&CPU::ZPX,4},{"STA",&CPU::STA,&CPU::ZPX,4},{"STX",&CPU::STX,&CPU::ZPY,4},{"SAX",&CPU::SAX,&CPU::ZPY,4},
+        {"TYA",&CPU::TYA,&CPU::IMP,2},{"STA",&CPU::STA,&CPU::ABY,5},{"TXS",&CPU::TXS,&CPU::IMP,2},{"TAS",&CPU::TAS,&CPU::ABY,5},
+        {"SHY",&CPU::SHY,&CPU::ABX,5},{"STA",&CPU::STA,&CPU::ABX,5},{"SHX",&CPU::SHX,&CPU::ABY,5},{"SHA",&CPU::SHA,&CPU::ABY,5},
+
+        // 0xA0-0xAF
+        {"LDY",&CPU::LDY,&CPU::IMM,2},{"LDA",&CPU::LDA,&CPU::IZX,6},{"LDX",&CPU::LDX,&CPU::IMM,2},{"LAX",&CPU::LAX,&CPU::IZX,6},
+        {"LDY",&CPU::LDY,&CPU::ZP0,3},{"LDA",&CPU::LDA,&CPU::ZP0,3},{"LDX",&CPU::LDX,&CPU::ZP0,3},{"LAX",&CPU::LAX,&CPU::ZP0,3},
+        {"TAY",&CPU::TAY,&CPU::IMP,2},{"LDA",&CPU::LDA,&CPU::IMM,2},{"TAX",&CPU::TAX,&CPU::IMP,2},{"LXA",&CPU::LXA,&CPU::IMM,2},
+        {"LDY",&CPU::LDY,&CPU::ABS,4},{"LDA",&CPU::LDA,&CPU::ABS,4},{"LDX",&CPU::LDX,&CPU::ABS,4},{"LAX",&CPU::LAX,&CPU::ABS,4},
+
+        // 0xB0-0xBF
+        {"BCS",&CPU::BCS,&CPU::REL,2},{"LDA",&CPU::LDA,&CPU::IZY,5},{"???",&CPU::XXX,&CPU::IMP,2},{"LAX",&CPU::LAX,&CPU::IZY,5},
+        {"LDY",&CPU::LDY,&CPU::ZPX,4},{"LDA",&CPU::LDA,&CPU::ZPX,4},{"LDX",&CPU::LDX,&CPU::ZPY,4},{"LAX",&CPU::LAX,&CPU::ZPY,4},
+        {"CLV",&CPU::CLV,&CPU::IMP,2},{"LDA",&CPU::LDA,&CPU::ABY,4},{"TSX",&CPU::TSX,&CPU::IMP,2},{"LAS",&CPU::LAS,&CPU::ABY,4},
+        {"LDY",&CPU::LDY,&CPU::ABX,4},{"LDA",&CPU::LDA,&CPU::ABX,4},{"LDX",&CPU::LDX,&CPU::ABY,4},{"LAX",&CPU::LAX,&CPU::ABY,4},
+
+        // 0xC0-0xCF
+        {"CPY",&CPU::CPY,&CPU::IMM,2},{"CMP",&CPU::CMP,&CPU::IZX,6},{"NOP",&CPU::NOP,&CPU::IMM,2},{"DCP",&CPU::DCP,&CPU::IZX,8},
+        {"CPY",&CPU::CPY,&CPU::ZP0,3},{"CMP",&CPU::CMP,&CPU::ZP0,3},{"DEC",&CPU::DEC,&CPU::ZP0,5},{"DCP",&CPU::DCP,&CPU::ZP0,5},
+        {"INY",&CPU::INY,&CPU::IMP,2},{"CMP",&CPU::CMP,&CPU::IMM,2},{"DEX",&CPU::DEX,&CPU::IMP,2},{"AXS",&CPU::AXS,&CPU::IMM,2},
+        {"CPY",&CPU::CPY,&CPU::ABS,4},{"CMP",&CPU::CMP,&CPU::ABS,4},{"DEC",&CPU::DEC,&CPU::ABS,6},{"DCP",&CPU::DCP,&CPU::ABS,6},
+
+        // 0xD0-0xDF
+        {"BNE",&CPU::BNE,&CPU::REL,2},{"CMP",&CPU::CMP,&CPU::IZY,5},{"???",&CPU::XXX,&CPU::IMP,2},{"DCP",&CPU::DCP,&CPU::IZY,8},
+        {"NOP",&CPU::NOP,&CPU::ZPX,4},{"CMP",&CPU::CMP,&CPU::ZPX,4},{"DEC",&CPU::DEC,&CPU::ZPX,6},{"DCP",&CPU::DCP,&CPU::ZPX,6},
+        {"CLD",&CPU::CLD,&CPU::IMP,2},{"CMP",&CPU::CMP,&CPU::ABY,4},{"NOP",&CPU::NOP,&CPU::IMP,2},{"DCP",&CPU::DCP,&CPU::ABY,7},
+        {"NOP",&CPU::NOP,&CPU::ABX,4},{"CMP",&CPU::CMP,&CPU::ABX,4},{"DEC",&CPU::DEC,&CPU::ABX,7},{"DCP",&CPU::DCP,&CPU::ABX,7},
+
+        // 0xE0-0xEF
+        {"CPX",&CPU::CPX,&CPU::IMM,2},{"SBC",&CPU::SBC,&CPU::IZX,6},{"NOP",&CPU::NOP,&CPU::IMM,2},{"ISC",&CPU::ISC,&CPU::IZX,8},
+        {"CPX",&CPU::CPX,&CPU::ZP0,3},{"SBC",&CPU::SBC,&CPU::ZP0,3},{"INC",&CPU::INC,&CPU::ZP0,5},{"ISC",&CPU::ISC,&CPU::ZP0,5},
+        {"INX",&CPU::INX,&CPU::IMP,2},{"SBC",&CPU::SBC,&CPU::IMM,2},{"NOP",&CPU::NOP,&CPU::IMP,2},{"SBC",&CPU::SBC,&CPU::IMM,2},
+        {"CPX",&CPU::CPX,&CPU::ABS,4},{"SBC",&CPU::SBC,&CPU::ABS,4},{"INC",&CPU::INC,&CPU::ABS,6},{"ISC",&CPU::ISC,&CPU::ABS,6},
+
+        // 0xF0-0xFF
+        {"BEQ",&CPU::BEQ,&CPU::REL,2},{"SBC",&CPU::SBC,&CPU::IZY,5},{"???",&CPU::XXX,&CPU::IMP,2},{"ISC",&CPU::ISC,&CPU::IZY,8},
+        {"NOP",&CPU::NOP,&CPU::ZPX,4},{"SBC",&CPU::SBC,&CPU::ZPX,4},{"INC",&CPU::INC,&CPU::ZPX,6},{"ISC",&CPU::ISC,&CPU::ZPX,6},
+        {"SED",&CPU::SED,&CPU::IMP,2},{"SBC",&CPU::SBC,&CPU::ABY,4},{"NOP",&CPU::NOP,&CPU::IMP,2},{"ISC",&CPU::ISC,&CPU::ABY,7},
+        {"NOP",&CPU::NOP,&CPU::ABX,4},{"SBC",&CPU::SBC,&CPU::ABX,4},{"INC",&CPU::INC,&CPU::ABX,7},{"ISC",&CPU::ISC,&CPU::ABX,7},
     } };
 }

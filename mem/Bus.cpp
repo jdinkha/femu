@@ -1,6 +1,7 @@
 #include "Bus.h"
 
 Bus::Bus() {
+    cpu.ConnectBus(this);
     ram.fill(0x00);
 }
 
@@ -9,8 +10,7 @@ void Bus::insertCartridge(const std::shared_ptr<Cartridge>& cart) {
 }
 
 void Bus::reset() {
-    ram.fill(0x00);
-    // ppu.reset(); apu.reset();
+    cpu.reset();
 }
 
 uint8_t Bus::cpuRead(uint16_t addr) {

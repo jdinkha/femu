@@ -36,7 +36,7 @@ int main(int argc, char* argv[]) {
     }
 
     SDL_Window* window = SDL_CreateWindow(
-        "NES Emulator",
+        "femu",
         NES_WIDTH * SCALE, NES_HEIGHT * SCALE,
         0
     );
@@ -96,14 +96,6 @@ int main(int argc, char* argv[]) {
     bus.insertCartridge(cart);
     bus.reset();
 
-    // Frame pacing: nothing above this point limits how fast we can churn
-    // through emulated frames, so without this the loop runs as fast as the
-    // CPU allows (hundreds of fps) - audio doesn't have this problem because
-    // the audio *device* only drains samples at a fixed 44.1kHz regardless
-    // of how fast we push them, but video has no equivalent hardware limit
-    // on our end. We deliberately time against a real clock rather than
-    // relying on vsync, since vsync ties to the display's refresh rate
-    // (60Hz, 144Hz, whatever) rather than the NES's specific ~60.0988Hz.
     constexpr double NES_FPS = 60.0988;
     constexpr double TARGET_FRAME_SECONDS = 1.0 / NES_FPS;
     const Uint64 perf_freq = SDL_GetPerformanceFrequency();

@@ -1,5 +1,5 @@
-#include "Cartridge.h"
-#include "Mapper000.h"
+#include "cartridge.h"
+#include "mapper000.cpp"
 #include <fstream>
 
 struct INesHeader {

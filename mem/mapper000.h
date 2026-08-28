@@ -1,39 +1,16 @@
 #pragma once
 #include "Mapper.h"
 
-class Mapper000 : public Mapper {
+// NROM: the simplest mapper, no bank switching at all. Either 16KB of PRG
+// (mirrored across $8000-$FFFF) or a full 32KB. CHR is always a single
+// fixed 8KB bank (RAM if the cartridge shipped with none).
+class Mapper_000 : public Mapper {
 public:
-    Mapper000(uint8_t prgBanks, uint8_t chrBanks) : Mapper(prgBanks, chrBanks) {}
+    Mapper_000(uint8_t prgBanks, uint8_t chrBanks) : Mapper(prgBanks, chrBanks) {}
+    ~Mapper_000() override = default;
 
-    bool cpuMapRead(uint16_t addr, uint32_t& mappedAddr) override {
-        if (addr >= 0x8000 && addr <= 0xFFFF) {
-            mappedAddr = addr & (nPRGBanks > 1 ? 0x7FFF : 0x3FFF);
-            return true;
-        }
-        return false;
-    }
-
-    bool cpuMapWrite(uint16_t addr, uint32_t& mappedAddr) override {
-        if (addr >= 0x8000 && addr <= 0xFFFF) {
-            mappedAddr = addr & (nPRGBanks > 1 ? 0x7FFF : 0x3FFF);
-            return true; // ROM — write is normally a no-op at Cartridge level
-        }
-        return false;
-    }
-
-    bool ppuMapRead(uint16_t addr, uint32_t& mappedAddr) override {
-        if (addr <= 0x1FFF) {
-            mappedAddr = addr;
-            return true;
-        }
-        return false;
-    }
-
-    bool ppuMapWrite(uint16_t addr, uint32_t& mappedAddr) override {
-        if (addr <= 0x1FFF && nCHRBanks == 0) {
-            mappedAddr = addr; // only writable when using CHR-RAM
-            return true;
-        }
-        return false;
-    }
+    bool cpuMapRead(uint16_t addr, uint32_t& mapped_addr) override;
+    bool cpuMapWrite(uint16_t addr, uint32_t& mapped_addr) override;
+    bool ppuMapRead(uint16_t addr, uint32_t& mapped_addr) override;
+    bool ppuMapWrite(uint16_t addr, uint32_t& mapped_addr) override;
 };

@@ -3,7 +3,7 @@
 #include <vector>
 #include <string>
 #include <memory>
-#include "Mapper.h"
+#include "mapper.h"
 
 enum class Mirror { HORIZONTAL, VERTICAL, ONESCREEN_LO, ONESCREEN_HI };
 

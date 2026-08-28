@@ -1,5 +1,5 @@
 #include "cpu.h"
-#include "../mem/Bus.h"
+#include "../mem/bus.h"
 #include <cstdio>
 
 uint8_t CPU::cpuRead(uint16_t addr)              { return bus->cpuRead(addr); }

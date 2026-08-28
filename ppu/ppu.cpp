@@ -266,6 +266,81 @@ void PPU::SetPixel(int x, int y, uint8_t colorIndex) {
     framebuffer[base + 2] = paletteRGB[(size_t)colorIndex * 3 + 2];
 }
 
+static inline uint8_t FlipByte(uint8_t b) {
+    b = (uint8_t)(((b & 0xF0) >> 4) | ((b & 0x0F) << 4));
+    b = (uint8_t)(((b & 0xCC) >> 2) | ((b & 0x33) << 2));
+    b = (uint8_t)(((b & 0xAA) >> 1) | ((b & 0x55) << 1));
+    return b;
+}
+
+void PPU::EvaluateSpritesForScanline() {
+    // Real hardware evaluates OAM sequentially across many cycles and has a
+    // hardware bug in overflow detection; this scans all 64 sprites in one
+    // shot instead, which produces the same visible result for the common
+    // case (up to 8 sprites per line rendered correctly, ninth+ dropped).
+    spriteScanline.fill(SpriteEntry{});
+    sprite_count = 0;
+    bSpriteZeroHitPossible = false;
+
+    uint8_t sprite_height = control.sprite_size ? 16 : 8;
+
+    for (int n = 0; n < 64 && sprite_count < 9; n++) {
+        int16_t diff = (int16_t)scanline - (int16_t)OAM[n * 4 + 0];
+        if (diff >= 0 && diff < sprite_height) {
+            if (sprite_count < 8) {
+                if (n == 0) bSpriteZeroHitPossible = true;
+                spriteScanline[sprite_count].y         = OAM[n * 4 + 0];
+                spriteScanline[sprite_count].id         = OAM[n * 4 + 1];
+                spriteScanline[sprite_count].attribute = OAM[n * 4 + 2];
+                spriteScanline[sprite_count].x         = OAM[n * 4 + 3];
+                sprite_count++;
+            } else {
+                status.sprite_overflow = 1;
+            }
+        }
+    }
+}
+
+void PPU::LoadSpriteShifters() {
+    for (uint8_t i = 0; i < sprite_count; i++) {
+        uint8_t sprite_pattern_bits_lo, sprite_pattern_bits_hi;
+        uint16_t sprite_pattern_addr_lo, sprite_pattern_addr_hi;
+
+        bool flip_v = spriteScanline[i].attribute & 0x80;
+        bool flip_h = spriteScanline[i].attribute & 0x40;
+        uint16_t row = (uint16_t)(scanline - spriteScanline[i].y);
+
+        if (!control.sprite_size) {
+            // 8x8 sprites
+            uint16_t r = flip_v ? (7 - row) : row;
+            sprite_pattern_addr_lo = (uint16_t)(((uint16_t)control.pattern_sprite << 12)
+                | ((uint16_t)spriteScanline[i].id << 4) | r);
+        } else {
+            // 8x16 sprites: bit 0 of the tile id selects the pattern table,
+            // and the tile id's top half/bottom half swap on vertical flip.
+            bool top_half = row < 8;
+            uint16_t r = flip_v ? (7 - (row & 0x07)) : (row & 0x07);
+            uint16_t tile = (uint16_t)(spriteScanline[i].id & 0xFE);
+            bool use_bottom_tile = flip_v ? top_half : !top_half;
+            if (use_bottom_tile) tile++;
+            sprite_pattern_addr_lo = (uint16_t)(((uint16_t)(spriteScanline[i].id & 0x01) << 12)
+                | (tile << 4) | r);
+        }
+        sprite_pattern_addr_hi = (uint16_t)(sprite_pattern_addr_lo + 8);
+
+        sprite_pattern_bits_lo = ppuRead(sprite_pattern_addr_lo);
+        sprite_pattern_bits_hi = ppuRead(sprite_pattern_addr_hi);
+
+        if (flip_h) {
+            sprite_pattern_bits_lo = FlipByte(sprite_pattern_bits_lo);
+            sprite_pattern_bits_hi = FlipByte(sprite_pattern_bits_hi);
+        }
+
+        sprite_shifter_pattern_lo[i] = sprite_pattern_bits_lo;
+        sprite_shifter_pattern_hi[i] = sprite_pattern_bits_hi;
+    }
+}
+
 void PPU::clock() {
     bool renderLine = (scanline >= -1 && scanline < 240);
 
@@ -273,6 +348,8 @@ void PPU::clock() {
         status.vertical_blank = 0;
         status.sprite_zero_hit = 0;
         status.sprite_overflow = 0;
+        for (auto& s : sprite_shifter_pattern_lo) s = 0;
+        for (auto& s : sprite_shifter_pattern_hi) s = 0;
     }
 
     if (renderLine) {
@@ -324,6 +401,17 @@ void PPU::clock() {
         if (scanline == -1 && cycle >= 280 && cycle < 305) {
             TransferAddressY();
         }
+
+        // Sprite evaluation for this scanline, then fetch pattern data for
+        // whatever was found - simplified to happen in one shot rather than
+        // being spread across cycles 65-340 like real hardware, but produces
+        // the same visible sprites.
+        if (cycle == 257 && scanline >= 0) {
+            EvaluateSpritesForScanline();
+        }
+        if (cycle == 340) {
+            LoadSpriteShifters();
+        }
     }
 
     if (scanline == 241 && cycle == 1) {
@@ -344,7 +432,60 @@ void PPU::clock() {
             uint8_t pal1 = (bg_shifter_attrib_hi & bit_mux) > 0;
             bg_palette = (uint8_t)((pal1 << 1) | pal0);
         }
-        SetPixel(cycle - 1, scanline, GetColorFromPaletteRam(bg_palette, bg_pixel));
+
+        uint8_t fg_pixel = 0x00, fg_palette = 0x00;
+        bool fg_priority = false;
+        bSpriteZeroBeingRendered = false;
+
+        if (mask.render_sprites) {
+            for (uint8_t i = 0; i < sprite_count; i++) {
+                if (spriteScanline[i].x == 0) {
+                    uint8_t p0 = (sprite_shifter_pattern_lo[i] & 0x80) > 0;
+                    uint8_t p1 = (sprite_shifter_pattern_hi[i] & 0x80) > 0;
+                    uint8_t pixel = (uint8_t)((p1 << 1) | p0);
+                    if (pixel != 0) {
+                        fg_pixel = pixel;
+                        fg_palette = (uint8_t)((spriteScanline[i].attribute & 0x03) + 0x04);
+                        fg_priority = !(spriteScanline[i].attribute & 0x20);
+                        if (i == 0) bSpriteZeroBeingRendered = true;
+                        break; // lower OAM index wins when sprites overlap
+                    }
+                }
+            }
+        }
+
+        uint8_t pixel = 0x00, palette = 0x00;
+        if (bg_pixel == 0 && fg_pixel > 0) {
+            pixel = fg_pixel; palette = fg_palette;
+        } else if (bg_pixel > 0 && fg_pixel == 0) {
+            pixel = bg_pixel; palette = bg_palette;
+        } else if (bg_pixel > 0 && fg_pixel > 0) {
+            pixel = fg_priority ? fg_pixel : bg_pixel;
+            palette = fg_priority ? fg_palette : bg_palette;
+
+            if (bSpriteZeroHitPossible && bSpriteZeroBeingRendered
+                && mask.render_background && mask.render_sprites) {
+                // Left-edge 8 pixels can be individually hidden per-layer;
+                // sprite-0 hit only counts where both layers are actually drawn.
+                bool leftClip = !(mask.render_background_left && mask.render_sprites_left);
+                if ((leftClip && cycle >= 9 && cycle < 258) || (!leftClip && cycle >= 1 && cycle < 258)) {
+                    status.sprite_zero_hit = 1;
+                }
+            }
+        }
+
+        SetPixel(cycle - 1, scanline, GetColorFromPaletteRam(palette, pixel));
+
+        // Advance every active sprite's shifter by one pixel: count down its
+        // x delay first, then once it's live, shift a bit out each cycle.
+        for (uint8_t i = 0; i < sprite_count; i++) {
+            if (spriteScanline[i].x > 0) {
+                spriteScanline[i].x--;
+            } else {
+                sprite_shifter_pattern_lo[i] <<= 1;
+                sprite_shifter_pattern_hi[i] <<= 1;
+            }
+        }
     }
 
     cycle++;

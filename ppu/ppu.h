@@ -107,8 +107,16 @@ private:
 
     uint8_t ppu_data_buffer = 0x00; // $2007 reads are delayed by one, except palette reads
     uint8_t oam_addr = 0x00;
-    std::array<uint8_t, 256> OAM{}; // sprite memory - unused until sprite rendering is added
+    std::array<uint8_t, 256> OAM{}; // 64 sprites x 4 bytes (Y, tile, attribute, X)
 
+public:
+    // Called by Bus on a $4014 (OAMDMA) write. Copies one byte into OAM.
+    // NOTE: real hardware stalls the CPU for ~513-514 cycles during the full
+    // 256-byte transfer; Bus currently does the whole copy in one go rather
+    // than modeling that stall. Fine for correctness, not cycle-accurate.
+    void WriteOAMByte(uint8_t index, uint8_t value) { OAM[index] = value; }
+
+private:
     // ---- Background rendering pipeline ----
     int16_t scanline = -1; // -1 = pre-render line
     int16_t cycle = 0;
@@ -129,6 +137,20 @@ private:
     void TransferAddressY();
     void LoadBackgroundShifters();
     void UpdateShifters();
+
+    // ---- Sprite (foreground) rendering pipeline ----
+    struct SpriteEntry { uint8_t y = 0xFF, id = 0xFF, attribute = 0xFF, x = 0xFF; };
+    std::array<SpriteEntry, 8> spriteScanline{}; // up to 8 sprites found for the current scanline
+    uint8_t sprite_count = 0;
+
+    std::array<uint8_t, 8> sprite_shifter_pattern_lo{};
+    std::array<uint8_t, 8> sprite_shifter_pattern_hi{};
+
+    bool bSpriteZeroHitPossible = false;
+    bool bSpriteZeroBeingRendered = false;
+
+    void EvaluateSpritesForScanline();
+    void LoadSpriteShifters();
 
     uint8_t GetColorFromPaletteRam(uint8_t palette, uint8_t pixel);
     void    SetPixel(int x, int y, uint8_t colorIndex);

@@ -1,5 +1,5 @@
 #pragma once
-#include "Mapper.h"
+#include "mapper.h"
 
 // NROM: the simplest mapper, no bank switching at all. Either 16KB of PRG
 // (mirrored across $8000-$FFFF) or a full 32KB. CHR is always a single

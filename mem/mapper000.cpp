@@ -1,39 +1,28 @@
-#pragma once
-#include "mapper.h"
+#include "mapper000.h"
 
-class Mapper000 : public Mapper {
-public:
-    Mapper000(uint8_t prgBanks, uint8_t chrBanks) : Mapper(prgBanks, chrBanks) {}
+bool Mapper_000::cpuMapRead(uint16_t addr, uint32_t& mapped_addr) {
+    if (addr < 0x8000) return false;
+    // NROM-128 (1 bank): mirror $8000-$BFFF into $C000-$FFFF.
+    // NROM-256 (2 banks): full 32KB mapped directly.
+    mapped_addr = addr & (nPRGBanks > 1 ? 0x7FFF : 0x3FFF);
+    return true;
+}
 
-    bool cpuMapRead(uint16_t addr, uint32_t& mappedAddr) override {
-        if (addr >= 0x8000 && addr <= 0xFFFF) {
-            mappedAddr = addr & (nPRGBanks > 1 ? 0x7FFF : 0x3FFF);
-            return true;
-        }
-        return false;
-    }
+bool Mapper_000::cpuMapWrite(uint16_t addr, uint32_t& mapped_addr) {
+    if (addr < 0x8000) return false;
+    mapped_addr = addr & (nPRGBanks > 1 ? 0x7FFF : 0x3FFF);
+    return true; // PRG-ROM is physically read-only; Cartridge decides what to do with the write
+}
 
-    bool cpuMapWrite(uint16_t addr, uint32_t& mappedAddr) override {
-        if (addr >= 0x8000 && addr <= 0xFFFF) {
-            mappedAddr = addr & (nPRGBanks > 1 ? 0x7FFF : 0x3FFF);
-            return true; // ROM — write is normally a no-op at Cartridge level
-        }
-        return false;
-    }
+bool Mapper_000::ppuMapRead(uint16_t addr, uint32_t& mapped_addr) {
+    if (addr > 0x1FFF) return false;
+    mapped_addr = addr;
+    return true;
+}
 
-    bool ppuMapRead(uint16_t addr, uint32_t& mappedAddr) override {
-        if (addr <= 0x1FFF) {
-            mappedAddr = addr;
-            return true;
-        }
-        return false;
-    }
-
-    bool ppuMapWrite(uint16_t addr, uint32_t& mappedAddr) override {
-        if (addr <= 0x1FFF && nCHRBanks == 0) {
-            mappedAddr = addr; // only writable when using CHR-RAM
-            return true;
-        }
-        return false;
-    }
-};
+bool Mapper_000::ppuMapWrite(uint16_t addr, uint32_t& mapped_addr) {
+    if (addr > 0x1FFF) return false;
+    if (nCHRBanks != 0) return false; // real CHR-ROM is not writable
+    mapped_addr = addr; // CHR-RAM case
+    return true;
+}

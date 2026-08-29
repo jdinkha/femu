@@ -41,3 +41,5 @@ __pycache__/
 *.pyc
 build/
 tests/
+femu_config.txt
+imgui.ini

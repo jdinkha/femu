@@ -165,6 +165,7 @@ int main(int argc, char* argv[]) {
     AppState state = AppState::MENU;
     bool is_fullscreen = false;
     double overlay_hint_timer = 0.0; // counts down from OVERLAY_HINT_SECONDS after a fresh boot
+    double save_ram_timer = 0.0;     // counts up; periodic save protects against crashes/force-quits
 
     // Optional: still support launching straight into a ROM via argv.
     if (argc >= 2) {
@@ -379,6 +380,16 @@ int main(int argc, char* argv[]) {
                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_AlwaysAutoResize);
                 ImGui::Text("ESC: Menu");
                 ImGui::End();
+            }
+
+            // Periodic save-RAM flush - the destructor already saves on clean
+            // exit or ROM switch, but this covers crashes/force-quits too.
+            // The cartridge destructor no-ops for non-battery games, so this
+            // is cheap to call even when it has nothing to actually persist.
+            save_ram_timer += TARGET_FRAME_SECONDS;
+            if (save_ram_timer >= 5.0) {
+                save_ram_timer = 0.0;
+                if (cart) cart->SaveRAM();
             }
         }
 

@@ -50,17 +50,18 @@ uint8_t PPU::ppuRead(uint16_t addr) {
         return 0x00; // no cartridge / no CHR data available
     } else if (addr <= 0x3EFF) {
         addr &= 0x0FFF;
-        if (cart->mirror == Mirror::VERTICAL) {
-            if (addr <= 0x03FF)      data = nameTable[0][addr & 0x03FF];
-            else if (addr <= 0x07FF) data = nameTable[1][addr & 0x03FF];
-            else if (addr <= 0x0BFF) data = nameTable[0][addr & 0x03FF];
-            else                     data = nameTable[1][addr & 0x03FF];
-        } else { // HORIZONTAL
-            if (addr <= 0x03FF)      data = nameTable[0][addr & 0x03FF];
-            else if (addr <= 0x07FF) data = nameTable[0][addr & 0x03FF];
-            else if (addr <= 0x0BFF) data = nameTable[1][addr & 0x03FF];
-            else                     data = nameTable[1][addr & 0x03FF];
+        static const uint8_t vertical_map[4]   = {0, 1, 0, 1};
+        static const uint8_t horizontal_map[4] = {0, 0, 1, 1};
+        uint8_t quadrant = (uint8_t)(addr / 0x0400);
+        uint8_t table;
+        switch (cart->mirror()) {
+            case Mirror::VERTICAL:      table = vertical_map[quadrant]; break;
+            case Mirror::HORIZONTAL:    table = horizontal_map[quadrant]; break;
+            case Mirror::ONESCREEN_HI:  table = 1; break;
+            case Mirror::ONESCREEN_LO:
+            default:                    table = 0; break;
         }
+        data = nameTable[table][addr & 0x03FF];
     } else { // addr <= 0x3FFF
         addr &= 0x001F;
         if (addr == 0x0010) addr = 0x0000;
@@ -81,17 +82,18 @@ void PPU::ppuWrite(uint16_t addr, uint8_t data) {
         // CHR-ROM: nothing to do (cart->ppuWrite already handled the CHR-RAM case above)
     } else if (addr <= 0x3EFF) {
         addr &= 0x0FFF;
-        if (cart->mirror == Mirror::VERTICAL) {
-            if (addr <= 0x03FF)      nameTable[0][addr & 0x03FF] = data;
-            else if (addr <= 0x07FF) nameTable[1][addr & 0x03FF] = data;
-            else if (addr <= 0x0BFF) nameTable[0][addr & 0x03FF] = data;
-            else                     nameTable[1][addr & 0x03FF] = data;
-        } else {
-            if (addr <= 0x03FF)      nameTable[0][addr & 0x03FF] = data;
-            else if (addr <= 0x07FF) nameTable[0][addr & 0x03FF] = data;
-            else if (addr <= 0x0BFF) nameTable[1][addr & 0x03FF] = data;
-            else                     nameTable[1][addr & 0x03FF] = data;
+        static const uint8_t vertical_map[4]   = {0, 1, 0, 1};
+        static const uint8_t horizontal_map[4] = {0, 0, 1, 1};
+        uint8_t quadrant = (uint8_t)(addr / 0x0400);
+        uint8_t table;
+        switch (cart->mirror()) {
+            case Mirror::VERTICAL:      table = vertical_map[quadrant]; break;
+            case Mirror::HORIZONTAL:    table = horizontal_map[quadrant]; break;
+            case Mirror::ONESCREEN_HI:  table = 1; break;
+            case Mirror::ONESCREEN_LO:
+            default:                    table = 0; break;
         }
+        nameTable[table][addr & 0x03FF] = data;
     } else { // addr <= 0x3FFF
         addr &= 0x001F;
         if (addr == 0x0010) addr = 0x0000;
@@ -411,6 +413,16 @@ void PPU::clock() {
         }
         if (cycle == 340) {
             LoadSpriteShifters();
+        }
+
+        // MMC3's scanline-counting IRQ: real hardware counts PPT-address-bus
+        // A12 rising edges, which happen (among other places) around here
+        // due to sprite pattern fetches. Clocking it once per visible
+        // scanline at a fixed cycle is the standard approximation - accurate
+        // enough for the split-screen/status-bar effects MMC3 games use it for.
+        if (cycle == 260 && scanline >= 0 && scanline < 240
+            && (mask.render_background || mask.render_sprites)) {
+            if (cart) cart->ScanlineIRQ();
         }
     }
 

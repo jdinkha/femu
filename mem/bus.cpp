@@ -58,6 +58,9 @@ void Bus::clock() {
     if (apu.IRQPending()) {
         cpu.irq();
     }
+    if (cartridge && cartridge->irqState()) {
+        cpu.irq();
+    }
 
     system_clock_counter++;
 }

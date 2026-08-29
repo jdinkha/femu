@@ -29,6 +29,8 @@ add_executable(femu
     mem/bus.cpp
     mem/cartridge.cpp
     mem/mapper000.cpp
+    mem/mapper001.cpp
+    mem/mapper004.cpp
     ppu/ppu.cpp
     apu/apu.cpp
 )

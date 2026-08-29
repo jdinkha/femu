@@ -2,20 +2,20 @@
 #include <cstdint>
 #include <array>
 
+class Bus;
+
 // 2A03 Audio Processing Unit.
 //
-// Implements the four "easy" channels - two pulse, triangle, noise - with
-// duty cycles, envelopes, sweep (pulse only), length counters, and the
-// frame sequencer that clocks all of that on schedule. Produces a mixed
-// analog-ish sample on demand via GetOutputSample().
-//
-// NOT implemented: the DMC (delta modulation / sample-playback) channel.
-// It needs its own DMA reads from PRG-ROM and is the least commonly load-
-// bearing channel for a game's core audio - deliberately last on the list,
-// same as the original build-order plan.
+// Implements all five channels - two pulse, triangle, noise, and DMC - with
+// duty cycles, envelopes, sweep (pulse only), length counters, the frame
+// sequencer that clocks all of that on schedule, and DMC's own memory-reader
+// state machine. Produces a mixed analog-ish sample on demand via
+// GetOutputSample().
 class APU {
 public:
     APU();
+
+    void ConnectBus(Bus* b) { bus = b; } // DMC needs this to fetch sample bytes
 
     void cpuWrite(uint16_t addr, uint8_t data);
     uint8_t cpuRead(uint16_t addr); // only $4015 (status) is actually readable
@@ -23,8 +23,14 @@ public:
     void clock(); // call once per CPU cycle
     void reset();
 
+    // True if either the frame sequencer or the DMC wants to raise an IRQ.
+    // Bus checks this every clock and calls cpu.irq() - safe to call
+    // unconditionally every cycle since CPU's own irq() no-ops once the I
+    // flag is set, so this doesn't cause runaway re-triggering.
+    bool IRQPending() const { return frame_irq || dmc.irq_flag; }
+
     // Mixed output in roughly [0.0, 1.0], using the standard NES non-linear
-    // pulse/triangle-noise-dmc mixing approximation (with dmc term = 0).
+    // pulse/triangle-noise-dmc mixing approximation.
     double GetOutputSample() const { return last_sample; }
 
 private:
@@ -124,10 +130,52 @@ private:
         uint8_t Output() const;
     };
 
+    struct DMC {
+        bool irq_enable = false;
+        bool loop = false;
+        uint16_t timer_period = 428; // NTSC default (rate index 0)
+        uint16_t timer_value = 0;
+
+        uint16_t sample_address = 0xC000; // reload value for current_address
+        uint16_t sample_length = 1;       // reload value for bytes_remaining
+
+        uint16_t current_address = 0xC000;
+        uint16_t bytes_remaining = 0;     // >0 means "actively playing a sample"
+
+        uint8_t sample_buffer = 0;
+        bool sample_buffer_filled = false;
+
+        uint8_t shift_register = 0;
+        uint8_t bits_remaining = 8;
+        bool silence = true;
+
+        uint8_t output_level = 0; // this IS the output - no length-counter-style mute gate
+        bool irq_flag = false;
+
+        void WriteReg0(uint8_t data); // $4010: IRQ enable, loop, rate
+        void WriteReg1(uint8_t data); // $4011: direct output-level load
+        void WriteReg2(uint8_t data); // $4012: sample address
+        void WriteReg3(uint8_t data); // $4013: sample length
+        void SetEnabled(bool en);     // from $4015 bit 4
+
+        // Real hardware fetches sample bytes via DMA, which can briefly
+        // stall the CPU (~4 cycles, more if it collides with OAMDMA). We
+        // fetch instantly instead - same simplification already made for
+        // OAMDMA, and for the same reason: correctness without needing to
+        // model cycle-exact bus contention.
+        void FillSampleBufferIfNeeded(Bus* bus);
+        void ClockTimer(Bus* bus);
+
+        uint8_t Output() const { return output_level; }
+    };
+
     Pulse pulse1;
     Pulse pulse2;
     Triangle triangle;
     Noise noise;
+    DMC dmc;
+
+    Bus* bus = nullptr;
 
     // Frame sequencer
     bool five_step_mode = false;

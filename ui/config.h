@@ -2,10 +2,8 @@
 #include <SDL3/SDL.h>
 #include <string>
 
-// Remappable D-pad/button bindings. Defaults match what main.cpp used to
-// hardcode (Z/X for B/A... wait, A/B, arrows for D-pad, Enter/RShift for
-// Start/Select) - now living here instead so the GUI's keybind panel and
-// ReadController() share one source of truth.
+// Remappable D-pad/button bindings for one controller. Both controller 1
+// and (optionally) controller 2 use this same struct.
 struct KeyBindings {
     SDL_Scancode a      = SDL_SCANCODE_Z;
     SDL_Scancode b      = SDL_SCANCODE_X;
@@ -17,8 +15,20 @@ struct KeyBindings {
     SDL_Scancode right  = SDL_SCANCODE_RIGHT;
 };
 
+// System-level hotkeys (not tied to either controller). This is deliberately
+// separate from KeyBindings and easy to extend - save state, load state, and
+// volume up/down are the obvious next additions once those features exist;
+// each is just one more field here plus one more row in the Hotkeys panel.
+struct HotkeyBindings {
+    SDL_Scancode fullscreen = SDL_SCANCODE_F11;
+};
+
 struct AppConfig {
-    KeyBindings keys;
+    KeyBindings keys;                // controller 1
+    KeyBindings keys2;                // controller 2 (only read if controller2_enabled)
+    bool controller2_enabled = false;
+    HotkeyBindings hotkeys;
+
     int window_scale = 3;
     std::string last_rom_dir = "roms";
 

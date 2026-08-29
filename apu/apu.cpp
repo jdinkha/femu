@@ -1,4 +1,5 @@
 #include "apu.h"
+#include "../mem/bus.h"
 
 const std::array<uint8_t, 32> APU::length_table = {
     10,254,20,2,40,4,80,6,160,8,60,10,14,12,26,14,
@@ -209,6 +210,91 @@ uint8_t APU::Noise::Output() const {
     return constant_volume ? envelope_volume : envelope_decay;
 }
 
+// =================================== DMC ======================================
+
+static const uint16_t dmc_rate_table[16] = {
+    428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54
+};
+
+void APU::DMC::WriteReg0(uint8_t data) {
+    irq_enable = (data & 0x80) != 0;
+    loop = (data & 0x40) != 0;
+    timer_period = dmc_rate_table[data & 0x0F];
+    if (!irq_enable) irq_flag = false; // clearing the enable bit also clears any pending flag
+}
+
+void APU::DMC::WriteReg1(uint8_t data) {
+    output_level = data & 0x7F; // top bit ignored - this is a 7-bit DAC
+}
+
+void APU::DMC::WriteReg2(uint8_t data) {
+    sample_address = (uint16_t)(0xC000 + ((uint16_t)data << 6));
+}
+
+void APU::DMC::WriteReg3(uint8_t data) {
+    sample_length = (uint16_t)(((uint16_t)data << 4) + 1);
+}
+
+void APU::DMC::SetEnabled(bool en) {
+    if (!en) {
+        bytes_remaining = 0; // stops the memory reader; already-loaded bits still play out
+    } else if (bytes_remaining == 0) {
+        current_address = sample_address;
+        bytes_remaining = sample_length;
+    }
+}
+
+void APU::DMC::FillSampleBufferIfNeeded(Bus* b) {
+    if (sample_buffer_filled || bytes_remaining == 0 || !b) return;
+
+    sample_buffer = b->cpuRead(current_address);
+    sample_buffer_filled = true;
+    current_address = (current_address == 0xFFFF) ? (uint16_t)0x8000 : (uint16_t)(current_address + 1);
+    bytes_remaining--;
+
+    if (bytes_remaining == 0) {
+        if (loop) {
+            current_address = sample_address;
+            bytes_remaining = sample_length;
+        } else if (irq_enable) {
+            irq_flag = true;
+        }
+    }
+}
+
+void APU::DMC::ClockTimer(Bus* b) {
+    // The memory reader is logically independent of the output-unit timer
+    // below - it just keeps the buffer topped up whenever it can.
+    FillSampleBufferIfNeeded(b);
+
+    if (timer_value == 0) {
+        timer_value = timer_period;
+
+        if (!silence) {
+            if (shift_register & 0x01) {
+                if (output_level <= 125) output_level += 2;
+            } else {
+                if (output_level >= 2) output_level -= 2;
+            }
+        }
+        shift_register >>= 1;
+        bits_remaining--;
+
+        if (bits_remaining == 0) {
+            bits_remaining = 8;
+            if (!sample_buffer_filled) {
+                silence = true;
+            } else {
+                silence = false;
+                shift_register = sample_buffer;
+                sample_buffer_filled = false;
+            }
+        }
+    } else {
+        timer_value--;
+    }
+}
+
 // =================================== APU ======================================
 
 APU::APU() {
@@ -225,6 +311,7 @@ void APU::reset() {
     triangle = Triangle{};
     noise = Noise{};
     noise.shift_register = 1;
+    dmc = DMC{};
     five_step_mode = false;
     irq_inhibit = false;
     frame_irq = false;
@@ -249,6 +336,10 @@ void APU::cpuWrite(uint16_t addr, uint8_t data) {
         case 0x400C: noise.WriteReg0(data); break;
         case 0x400E: noise.WriteReg2(data); break;
         case 0x400F: noise.WriteReg3(data); break;
+        case 0x4010: dmc.WriteReg0(data); break;
+        case 0x4011: dmc.WriteReg1(data); break;
+        case 0x4012: dmc.WriteReg2(data); break;
+        case 0x4013: dmc.WriteReg3(data); break;
         case 0x4015:
             pulse1.enabled = (data & 0x01) != 0;
             pulse2.enabled = (data & 0x02) != 0;
@@ -258,6 +349,7 @@ void APU::cpuWrite(uint16_t addr, uint8_t data) {
             if (!pulse2.enabled) pulse2.length_counter = 0;
             if (!triangle.enabled) triangle.length_counter = 0;
             if (!noise.enabled) noise.length_counter = 0;
+            dmc.SetEnabled((data & 0x10) != 0);
             break;
         case 0x4017:
             five_step_mode = (data & 0x80) != 0;
@@ -282,8 +374,11 @@ uint8_t APU::cpuRead(uint16_t addr) {
         if (pulse2.length_counter > 0)   result |= 0x02;
         if (triangle.length_counter > 0) result |= 0x04;
         if (noise.length_counter > 0)    result |= 0x08;
+        if (dmc.bytes_remaining > 0)     result |= 0x10;
+        if (dmc.irq_flag)                result |= 0x80;
         if (frame_irq)                   result |= 0x40;
-        frame_irq = false; // reading $4015 acknowledges the frame IRQ
+        frame_irq = false;    // reading $4015 acknowledges the frame IRQ
+        dmc.irq_flag = false; // ...and the DMC IRQ
         return result;
     }
     return 0x00;
@@ -291,8 +386,11 @@ uint8_t APU::cpuRead(uint16_t addr) {
 
 void APU::clock() {
     // Triangle's timer runs at the full CPU rate; pulse/noise run at half
-    // that (real hardware ties them to a separately-divided clock).
+    // that (real hardware ties them to a separately-divided clock). DMC also
+    // runs at full CPU rate - its rate table is specified directly in CPU
+    // cycles, unlike pulse/noise's tables.
     triangle.ClockTimer();
+    dmc.ClockTimer(bus);
     if ((cpu_cycle_count & 1) == 1) {
         pulse1.ClockTimer();
         pulse2.ClockTimer();
@@ -352,11 +450,12 @@ void APU::clock() {
     uint8_t p2 = pulse2.Output();
     uint8_t tr = triangle.Output();
     uint8_t ns = noise.Output();
+    uint8_t dm = dmc.Output();
 
-    // Standard NES non-linear mixing approximation (dmc term omitted - not implemented)
+    // Standard NES non-linear mixing approximation, now with all five channels.
     double pulse_out = (p1 + p2) == 0 ? 0.0 : 95.88 / ((8128.0 / (p1 + p2)) + 100.0);
-    double tnd_out = (tr == 0 && ns == 0) ? 0.0
-        : 159.79 / (1.0 / ((tr / 8227.0) + (ns / 12241.0)) + 100.0);
+    double tnd_out = (tr == 0 && ns == 0 && dm == 0) ? 0.0
+        : 159.79 / (1.0 / ((tr / 8227.0) + (ns / 12241.0) + (dm / 22638.0)) + 100.0);
 
     last_sample = pulse_out + tnd_out;
 }

@@ -11,6 +11,7 @@
 
 Bus::Bus() {
     cpu.ConnectBus(this);
+    apu.ConnectBus(this);
     ram.fill(0x00);
 }
 
@@ -48,6 +49,14 @@ void Bus::clock() {
     if (ppu.nmi) {
         ppu.nmi = false;
         cpu.nmi();
+    }
+
+    // Level-triggered, unlike NMI: safe to call every cycle while pending,
+    // since CPU::irq() itself no-ops once the I flag is set - it won't
+    // retrigger until the interrupt handler clears I again (and by then
+    // the game should have acknowledged the source via $4015).
+    if (apu.IRQPending()) {
+        cpu.irq();
     }
 
     system_clock_counter++;

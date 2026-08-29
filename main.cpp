@@ -17,6 +17,7 @@ namespace fs = std::filesystem;
 static constexpr int NES_WIDTH = 256;
 static constexpr int NES_HEIGHT = 240;
 static constexpr const char* CONFIG_PATH = "femu_config.txt";
+static constexpr double OVERLAY_HINT_SECONDS = 5.0;
 
 enum class AppState { MENU, RUNNING };
 
@@ -34,8 +35,8 @@ static uint8_t ReadController(const bool* keys, const KeyBindings& kb) {
 }
 
 // Centered, aspect-ratio-correct destination rect for the NES framebuffer
-// within an arbitrary (possibly user-resized) window - letterboxes instead
-// of stretching if the window isn't exactly 256:240.
+// within an arbitrary (possibly resized, possibly fullscreen) window -
+// letterboxes instead of stretching if the window isn't exactly 256:240.
 static SDL_FRect ComputeDestRect(int window_w, int window_h) {
     float aspect = (float)NES_WIDTH / (float)NES_HEIGHT;
     float win_aspect = (float)window_w / (float)window_h;
@@ -61,6 +62,42 @@ static void RefreshRomList(std::vector<std::string>& rom_files, const std::strin
             rom_files.push_back(entry.path().string());
         }
     }
+}
+
+// Bundles pointers to the main()-local state the async SDL dialog callbacks
+// need to touch. SDL_ShowOpenFileDialog/SDL_ShowOpenFolderDialog take a
+// plain C function pointer (no captures allowed), so this userdata struct
+// is how they reach back into main()'s state instead.
+struct DialogContext {
+    Bus* bus;
+    std::shared_ptr<Cartridge>* cart;
+    AppState* state;
+    AppConfig* config;
+    std::vector<std::string>* rom_files;
+};
+
+static void SDLCALL OnRomFileChosen(void* userdata, const char* const* filelist, int filter) {
+    (void)filter;
+    auto* ctx = (DialogContext*)userdata;
+    if (!filelist || !filelist[0]) return; // cancelled, or an error SDL already logged
+
+    auto new_cart = std::make_shared<Cartridge>(filelist[0]);
+    if (new_cart->imageValid()) {
+        *ctx->cart = new_cart;
+        ctx->bus->insertCartridge(*ctx->cart);
+        ctx->bus->reset();
+        *ctx->state = AppState::RUNNING;
+    }
+}
+
+static void SDLCALL OnRomFolderChosen(void* userdata, const char* const* filelist, int filter) {
+    (void)filter;
+    auto* ctx = (DialogContext*)userdata;
+    if (!filelist || !filelist[0]) return;
+
+    ctx->config->last_rom_dir = filelist[0];
+    ctx->config->Save(CONFIG_PATH);
+    RefreshRomList(*ctx->rom_files, ctx->config->last_rom_dir);
 }
 
 int main(int argc, char* argv[]) {
@@ -126,9 +163,10 @@ int main(int argc, char* argv[]) {
     Bus bus;
     std::shared_ptr<Cartridge> cart;
     AppState state = AppState::MENU;
+    bool is_fullscreen = false;
+    double overlay_hint_timer = 0.0; // counts down from OVERLAY_HINT_SECONDS after a fresh boot
 
-    // Optional: still support launching straight into a ROM via argv, same
-    // as before the GUI existed - just skips the menu on startup.
+    // Optional: still support launching straight into a ROM via argv.
     if (argc >= 2) {
         auto initial = std::make_shared<Cartridge>(argv[1]);
         if (initial->imageValid()) {
@@ -136,6 +174,7 @@ int main(int argc, char* argv[]) {
             bus.insertCartridge(cart);
             bus.reset();
             state = AppState::RUNNING;
+            overlay_hint_timer = OVERLAY_HINT_SECONDS;
         } else {
             std::fprintf(stderr, "Failed to load ROM from argv, opening menu instead: %s\n", argv[1]);
         }
@@ -144,7 +183,9 @@ int main(int argc, char* argv[]) {
     std::vector<std::string> rom_files;
     RefreshRomList(rom_files, config.last_rom_dir);
 
-    int rebinding_index = -1; // -1 = not currently capturing a key for rebinding
+    DialogContext dialog_ctx{ &bus, &cart, &state, &config, &rom_files };
+
+    SDL_Scancode* currently_rebinding = nullptr; // points at whichever field is being captured, or null
     const char* button_names[8] = { "A", "B", "Select", "Start", "Up", "Down", "Left", "Right" };
 
     constexpr double NES_FPS = 60.0988;
@@ -156,25 +197,32 @@ int main(int argc, char* argv[]) {
     SDL_Event event;
 
     while (running) {
-        // Rebuilt each iteration since config.keys can change via the panel below
-        SDL_Scancode* binding_targets[8] = {
-            &config.keys.a, &config.keys.b, &config.keys.select, &config.keys.start,
-            &config.keys.up, &config.keys.down, &config.keys.left, &config.keys.right
-        };
-
         while (SDL_PollEvent(&event)) {
             ImGui_ImplSDL3_ProcessEvent(&event);
 
             if (event.type == SDL_EVENT_QUIT) {
                 running = false;
             } else if (event.type == SDL_EVENT_KEY_DOWN) {
-                if (rebinding_index >= 0) {
-                    *binding_targets[rebinding_index] = event.key.scancode;
-                    rebinding_index = -1;
+                if (currently_rebinding) {
+                    *currently_rebinding = event.key.scancode;
+                    currently_rebinding = nullptr;
                     config.Save(CONFIG_PATH);
+                } else if (!event.key.repeat && event.key.scancode == config.hotkeys.fullscreen) {
+                    is_fullscreen = !is_fullscreen;
+                    SDL_SetWindowFullscreen(window, is_fullscreen);
                 } else if (event.key.key == SDLK_ESCAPE) {
-                    if (state == AppState::RUNNING) state = AppState::MENU;
-                    else running = false;
+                    // Toggle, not "always go to menu": ESC opens the menu
+                    // from gameplay, and - since that's the intuitive
+                    // expectation - takes you right back to the game from
+                    // the menu instead of needing a separate Resume button.
+                    if (state == AppState::RUNNING) {
+                        state = AppState::MENU;
+                    } else if (cart) {
+                        state = AppState::RUNNING;
+                    }
+                    // If no ROM is loaded yet, ESC in the menu does nothing -
+                    // there's no game to return to, and quitting on ESC would
+                    // be an easy accidental keystroke to regret.
                 }
             }
         }
@@ -184,11 +232,22 @@ int main(int argc, char* argv[]) {
         ImGui::NewFrame();
 
         if (state == AppState::MENU) {
-            ImGui::SetNextWindowSize(ImVec2(520, 420), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(560, 460), ImGuiCond_FirstUseEver);
             ImGui::Begin("femu");
 
             if (ImGui::BeginTabBar("MainTabs")) {
                 if (ImGui::BeginTabItem("Games")) {
+                    if (ImGui::Button("Browse for ROM...")) {
+                        static const SDL_DialogFileFilter filters[] = { { "NES ROMs", "nes" } };
+                        SDL_ShowOpenFileDialog(OnRomFileChosen, &dialog_ctx, window,
+                                                filters, 1, config.last_rom_dir.c_str(), false);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Choose ROMs Folder...")) {
+                        SDL_ShowOpenFolderDialog(OnRomFolderChosen, &dialog_ctx, window,
+                                                  config.last_rom_dir.c_str(), false);
+                    }
+
                     ImGui::Text("ROM folder: %s", config.last_rom_dir.c_str());
                     ImGui::SameLine();
                     if (ImGui::Button("Refresh")) {
@@ -208,6 +267,7 @@ int main(int argc, char* argv[]) {
                                 bus.insertCartridge(cart);
                                 bus.reset();
                                 state = AppState::RUNNING;
+                                overlay_hint_timer = OVERLAY_HINT_SECONDS;
                             }
                         }
                     }
@@ -222,7 +282,9 @@ int main(int argc, char* argv[]) {
                         std::snprintf(label, sizeof(label), "%dx", s);
                         if (ImGui::Button(label)) {
                             config.window_scale = s;
-                            SDL_SetWindowSize(window, NES_WIDTH * s, NES_HEIGHT * s);
+                            if (!is_fullscreen) {
+                                SDL_SetWindowSize(window, NES_WIDTH * s, NES_HEIGHT * s);
+                            }
                             config.Save(CONFIG_PATH);
                         }
                         ImGui::SameLine();
@@ -232,35 +294,71 @@ int main(int argc, char* argv[]) {
                 }
 
                 if (ImGui::BeginTabItem("Controls")) {
+                    ImGui::Text("Controller 1");
                     for (int i = 0; i < 8; i++) {
-                        ImGui::PushID(i);
+                        SDL_Scancode* targets1[8] = {
+                            &config.keys.a, &config.keys.b, &config.keys.select, &config.keys.start,
+                            &config.keys.up, &config.keys.down, &config.keys.left, &config.keys.right
+                        };
+                        ImGui::PushID(targets1[i]); // field's own address = a free unique ID
                         ImGui::Text("%s", button_names[i]);
                         ImGui::SameLine(120);
-                        std::string btn_label = (rebinding_index == i)
-                            ? "press a key..."
-                            : SDL_GetScancodeName(*binding_targets[i]);
+                        std::string btn_label = (currently_rebinding == targets1[i])
+                            ? "press a key..." : SDL_GetScancodeName(*targets1[i]);
                         if (ImGui::Button(btn_label.c_str(), ImVec2(160, 0))) {
-                            rebinding_index = i;
+                            currently_rebinding = targets1[i];
                         }
                         ImGui::PopID();
                     }
+
+                    ImGui::Separator();
+                    ImGui::Checkbox("Enable Controller 2", &config.controller2_enabled);
+                    if (config.controller2_enabled) {
+                        ImGui::Text("Controller 2");
+                        for (int i = 0; i < 8; i++) {
+                            SDL_Scancode* targets2[8] = {
+                                &config.keys2.a, &config.keys2.b, &config.keys2.select, &config.keys2.start,
+                                &config.keys2.up, &config.keys2.down, &config.keys2.left, &config.keys2.right
+                            };
+                            ImGui::PushID(targets2[i]);
+                            ImGui::Text("%s", button_names[i]);
+                            ImGui::SameLine(120);
+                            std::string btn_label = (currently_rebinding == targets2[i])
+                                ? "press a key..." : SDL_GetScancodeName(*targets2[i]);
+                            if (ImGui::Button(btn_label.c_str(), ImVec2(160, 0))) {
+                                currently_rebinding = targets2[i];
+                            }
+                            ImGui::PopID();
+                        }
+                    }
+                    ImGui::EndTabItem();
+                }
+
+                if (ImGui::BeginTabItem("Hotkeys")) {
+                    // Save state / load state / volume are natural next
+                    // additions here once those features exist - each is
+                    // just one more field in HotkeyBindings plus one more
+                    // row below, same pattern as Fullscreen.
+                    ImGui::PushID(&config.hotkeys.fullscreen);
+                    ImGui::Text("Fullscreen");
+                    ImGui::SameLine(120);
+                    std::string fs_label = (currently_rebinding == &config.hotkeys.fullscreen)
+                        ? "press a key..." : SDL_GetScancodeName(config.hotkeys.fullscreen);
+                    if (ImGui::Button(fs_label.c_str(), ImVec2(160, 0))) {
+                        currently_rebinding = &config.hotkeys.fullscreen;
+                    }
+                    ImGui::PopID();
                     ImGui::EndTabItem();
                 }
 
                 ImGui::EndTabBar();
             }
 
-            if (cart) {
-                ImGui::Separator();
-                if (ImGui::Button("Resume")) {
-                    state = AppState::RUNNING;
-                }
-            }
-
             ImGui::End();
         } else {
             const bool* keys = SDL_GetKeyboardState(nullptr);
             bus.controller[0] = ReadController(keys, config.keys);
+            bus.controller[1] = config.controller2_enabled ? ReadController(keys, config.keys2) : 0x00;
 
             do {
                 bus.clock();
@@ -273,13 +371,15 @@ int main(int argc, char* argv[]) {
                 bus.audio_samples.clear();
             }
 
-            // Small always-visible hint so it's discoverable that ESC opens the menu
-            ImGui::SetNextWindowBgAlpha(0.35f);
-            ImGui::SetNextWindowPos(ImVec2(8, 8));
-            ImGui::Begin("##overlay", nullptr,
-                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_AlwaysAutoResize);
-            ImGui::Text("ESC: Menu");
-            ImGui::End();
+            if (overlay_hint_timer > 0.0) {
+                overlay_hint_timer -= TARGET_FRAME_SECONDS;
+                ImGui::SetNextWindowBgAlpha(0.35f);
+                ImGui::SetNextWindowPos(ImVec2(8, 8));
+                ImGui::Begin("##overlay", nullptr,
+                    ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_AlwaysAutoResize);
+                ImGui::Text("ESC: Menu");
+                ImGui::End();
+            }
         }
 
         ImGui::Render();

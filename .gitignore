@@ -43,3 +43,5 @@ build/
 tests/
 femu_config.txt
 imgui.ini
+note.txt
+imgui/

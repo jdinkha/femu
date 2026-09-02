@@ -21,16 +21,47 @@ static constexpr double OVERLAY_HINT_SECONDS = 5.0;
 
 enum class AppState { MENU, RUNNING };
 
-static uint8_t ReadController(const bool* keys, const KeyBindings& kb) {
+struct DPadState {
+    bool left_newer = false; // if both Left and Right are held, was Left pressed more recently?
+    bool up_newer = false;
+    bool prev_left = false, prev_right = false, prev_up = false, prev_down = false;
+
+    void Update(bool left, bool right, bool up, bool down) {
+        if (left && !prev_left)   left_newer = true;   // Left just pressed -> it's the newer one
+        if (right && !prev_right) left_newer = false;  // Right just pressed -> it wins instead
+        if (up && !prev_up)       up_newer = true;
+        if (down && !prev_down)   up_newer = false;
+        prev_left = left; prev_right = right; prev_up = up; prev_down = down;
+    }
+};
+
+static uint8_t ReadController(const bool* keys, const KeyBindings& kb, DPadState& dpad) {
+    bool left  = keys[kb.left];
+    bool right = keys[kb.right];
+    bool up    = keys[kb.up];
+    bool down  = keys[kb.down];
+
+    dpad.Update(left, right, up, down);
+
+    // Resolve opposing pairs so at most one of each axis reaches the game
+    if (left && right) {
+        if (dpad.left_newer) right = false;
+        else                 left = false;
+    }
+    if (up && down) {
+        if (dpad.up_newer) down = false;
+        else               up = false;
+    }
+
     uint8_t c = 0;
     if (keys[kb.a])      c |= 0x80;
     if (keys[kb.b])      c |= 0x40;
     if (keys[kb.select]) c |= 0x20;
     if (keys[kb.start])  c |= 0x10;
-    if (keys[kb.up])     c |= 0x08;
-    if (keys[kb.down])   c |= 0x04;
-    if (keys[kb.left])   c |= 0x02;
-    if (keys[kb.right])  c |= 0x01;
+    if (up)              c |= 0x08;
+    if (down)            c |= 0x04;
+    if (left)            c |= 0x02;
+    if (right)           c |= 0x01;
     return c;
 }
 
@@ -166,6 +197,10 @@ int main(int argc, char* argv[]) {
     bool is_fullscreen = false;
     double overlay_hint_timer = 0.0; // counts down from OVERLAY_HINT_SECONDS after a fresh boot
     double save_ram_timer = 0.0;     // counts up; periodic save protects against crashes/force-quits
+
+    // Per-controller D-pad state, tracking press order across frames so
+    // opposing directions can be resolved last-pressed-wins.
+    DPadState dpad1, dpad2;
 
     // Optional: still support launching straight into a ROM via argv.
     if (argc >= 2) {
@@ -358,8 +393,9 @@ int main(int argc, char* argv[]) {
             ImGui::End();
         } else {
             const bool* keys = SDL_GetKeyboardState(nullptr);
-            bus.controller[0] = ReadController(keys, config.keys);
-            bus.controller[1] = config.controller2_enabled ? ReadController(keys, config.keys2) : 0x00;
+            bus.controller[0] = ReadController(keys, config.keys, dpad1);
+            bus.controller[1] = config.controller2_enabled
+                ? ReadController(keys, config.keys2, dpad2) : 0x00;
 
             do {
                 bus.clock();

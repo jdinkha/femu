@@ -84,6 +84,18 @@ static SDL_FRect ComputeDestRect(int window_w, int window_h) {
     return r;
 }
 
+// Reflects the currently loaded ROM in the window's title bar, e.g.
+// "femu - Super Mario Bros" while Super Mario Bros.nes is loaded, falling
+// back to plain "femu" when no game is loaded.
+static void UpdateWindowTitle(SDL_Window* window, const std::string& rom_path) {
+    if (rom_path.empty()) {
+        SDL_SetWindowTitle(window, "femu");
+    } else {
+        std::string title = "femu - " + fs::path(rom_path).stem().string();
+        SDL_SetWindowTitle(window, title.c_str());
+    }
+}
+
 static void RefreshRomList(std::vector<std::string>& rom_files, const std::string& dir) {
     rom_files.clear();
     std::error_code ec;
@@ -105,6 +117,8 @@ struct DialogContext {
     AppState* state;
     AppConfig* config;
     std::vector<std::string>* rom_files;
+    SDL_Window* window;
+    std::string* current_rom_path;
 };
 
 static void SDLCALL OnRomFileChosen(void* userdata, const char* const* filelist, int filter) {
@@ -118,6 +132,8 @@ static void SDLCALL OnRomFileChosen(void* userdata, const char* const* filelist,
         ctx->bus->insertCartridge(*ctx->cart);
         ctx->bus->reset();
         *ctx->state = AppState::RUNNING;
+        *ctx->current_rom_path = filelist[0];
+        UpdateWindowTitle(ctx->window, *ctx->current_rom_path);
     }
 }
 
@@ -193,6 +209,7 @@ int main(int argc, char* argv[]) {
 
     Bus bus;
     std::shared_ptr<Cartridge> cart;
+    std::string current_rom_path; // path of the loaded ROM, drives the window title
     AppState state = AppState::MENU;
     bool is_fullscreen = false;
     double overlay_hint_timer = 0.0; // counts down from OVERLAY_HINT_SECONDS after a fresh boot
@@ -210,6 +227,8 @@ int main(int argc, char* argv[]) {
             bus.insertCartridge(cart);
             bus.reset();
             state = AppState::RUNNING;
+            current_rom_path = argv[1];
+            UpdateWindowTitle(window, current_rom_path);
             overlay_hint_timer = OVERLAY_HINT_SECONDS;
         } else {
             std::fprintf(stderr, "Failed to load ROM from argv, opening menu instead: %s\n", argv[1]);
@@ -219,7 +238,7 @@ int main(int argc, char* argv[]) {
     std::vector<std::string> rom_files;
     RefreshRomList(rom_files, config.last_rom_dir);
 
-    DialogContext dialog_ctx{ &bus, &cart, &state, &config, &rom_files };
+    DialogContext dialog_ctx{ &bus, &cart, &state, &config, &rom_files, window, &current_rom_path };
 
     SDL_Scancode* currently_rebinding = nullptr; // points at whichever field is being captured, or null
     const char* button_names[8] = { "A", "B", "Select", "Start", "Up", "Down", "Left", "Right" };
@@ -303,6 +322,8 @@ int main(int argc, char* argv[]) {
                                 bus.insertCartridge(cart);
                                 bus.reset();
                                 state = AppState::RUNNING;
+                                current_rom_path = path;
+                                UpdateWindowTitle(window, current_rom_path);
                                 overlay_hint_timer = OVERLAY_HINT_SECONDS;
                             }
                         }

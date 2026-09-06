@@ -32,6 +32,12 @@ struct AppConfig {
     int window_scale = 3;
     std::string last_rom_dir = "roms";
 
+    // Audio. master_volume is a linear 0..1 gain applied to the SDL audio
+    // stream. audio_device is the SDL playback device *name* (not ID, which
+    // isn't stable across runs); empty means "follow the system default".
+    float master_volume = 1.0f;
+    std::string audio_device = "";
+
     // Simple line-based "key=value" text format - not INI/JSON, just enough
     // to round-trip these settings without pulling in a parsing library.
     static AppConfig Load(const std::string& path);

@@ -4,6 +4,9 @@
 #include <imgui_impl_sdlrenderer3.h>
 
 #include <cstdio>
+#include <cfloat>
+#include <cmath>
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -96,6 +99,50 @@ static void UpdateWindowTitle(SDL_Window* window, const std::string& rom_path) {
     }
 }
 
+// One enumerated SDL playback device. `id` is only valid for this run;
+// `name` is what we persist in the config so a chosen device can be
+// re-selected on the next launch.
+struct AudioDevice {
+    SDL_AudioDeviceID id;
+    std::string name;
+};
+
+static std::vector<AudioDevice> EnumerateAudioDevices() {
+    std::vector<AudioDevice> out;
+    int count = 0;
+    SDL_AudioDeviceID* ids = SDL_GetAudioPlaybackDevices(&count);
+    if (!ids) return out;
+    for (int i = 0; i < count; i++) {
+        const char* n = SDL_GetAudioDeviceName(ids[i]);
+        out.push_back({ ids[i], n ? n : "(unknown device)" });
+    }
+    SDL_free(ids);
+    return out;
+}
+
+// Resolve a persisted device name back to a live ID. Empty name, or a name
+// that no longer matches any connected device, falls back to the default.
+static SDL_AudioDeviceID DeviceIdForName(const std::vector<AudioDevice>& devices,
+                                        const std::string& name) {
+    if (name.empty()) return SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK;
+    for (auto& d : devices) {
+        if (d.name == name) return d.id;
+    }
+    return SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK;
+}
+
+// Open a mono F32 44.1kHz playback stream on the given device and start it.
+// Returns nullptr on failure (caller decides whether that's fatal).
+static SDL_AudioStream* OpenAudioStream(SDL_AudioDeviceID device) {
+    SDL_AudioSpec spec{};
+    spec.freq = 44100;
+    spec.format = SDL_AUDIO_F32;
+    spec.channels = 1;
+    SDL_AudioStream* stream = SDL_OpenAudioDeviceStream(device, &spec, nullptr, nullptr);
+    if (stream) SDL_ResumeAudioStreamDevice(stream);
+    return stream;
+}
+
 static void RefreshRomList(std::vector<std::string>& rom_files, const std::string& dir) {
     rom_files.clear();
     std::error_code ec;
@@ -185,12 +232,17 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    SDL_AudioSpec audio_spec{};
-    audio_spec.freq = 44100;
-    audio_spec.format = SDL_AUDIO_F32;
-    audio_spec.channels = 1;
-    SDL_AudioStream* audio_stream = SDL_OpenAudioDeviceStream(
-        SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &audio_spec, nullptr, nullptr);
+    std::vector<AudioDevice> audio_devices = EnumerateAudioDevices();
+    SDL_AudioStream* audio_stream =
+        OpenAudioStream(DeviceIdForName(audio_devices, config.audio_device));
+    if (!audio_stream && !config.audio_device.empty()) {
+        // The saved device is gone or refused - don't fail startup over it,
+        // just fall back to the system default.
+        std::fprintf(stderr, "Audio device \"%s\" unavailable, using default: %s\n",
+                     config.audio_device.c_str(), SDL_GetError());
+        config.audio_device.clear();
+        audio_stream = OpenAudioStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK);
+    }
     if (!audio_stream) {
         std::fprintf(stderr, "SDL_OpenAudioDeviceStream failed: %s\n", SDL_GetError());
         SDL_DestroyTexture(texture);
@@ -199,7 +251,7 @@ int main(int argc, char* argv[]) {
         SDL_Quit();
         return 1;
     }
-    SDL_ResumeAudioStreamDevice(audio_stream);
+    SDL_SetAudioStreamGain(audio_stream, config.master_volume);
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -218,6 +270,24 @@ int main(int argc, char* argv[]) {
     // Per-controller D-pad state, tracking press order across frames so
     // opposing directions can be resolved last-pressed-wins.
     DPadState dpad1, dpad2;
+
+    // Smoothed peak level of the audio being sent to the device, 0..1, for
+    // the volume meter in the Audio settings tab. Bumped up by each frame's
+    // samples and decayed every frame so it falls back to zero on silence.
+    float audio_level = 0.0f;
+
+    // Switch the audio output to `device`, keeping the current volume. Leaves
+    // the existing stream untouched if the new device can't be opened.
+    auto reopen_audio = [&](SDL_AudioDeviceID device) {
+        SDL_AudioStream* fresh = OpenAudioStream(device);
+        if (!fresh) {
+            std::fprintf(stderr, "Failed to open audio device: %s\n", SDL_GetError());
+            return;
+        }
+        SDL_DestroyAudioStream(audio_stream);
+        audio_stream = fresh;
+        SDL_SetAudioStreamGain(audio_stream, config.master_volume);
+    };
 
     // Optional: still support launching straight into a ROM via argv.
     if (argc >= 2) {
@@ -286,6 +356,10 @@ int main(int argc, char* argv[]) {
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
 
+        // Decay the volume meter every frame; the running emulator bumps it
+        // back up below. ~0.82/frame gives a springy-but-readable falloff.
+        audio_level *= 0.82f;
+
         if (state == AppState::MENU) {
             ImGui::SetNextWindowSize(ImVec2(560, 460), ImGuiCond_FirstUseEver);
             ImGui::Begin("femu");
@@ -347,6 +421,51 @@ int main(int argc, char* argv[]) {
                         ImGui::SameLine();
                     }
                     ImGui::NewLine();
+                    ImGui::EndTabItem();
+                }
+
+                if (ImGui::BeginTabItem("Audio")) {
+                    float volume_pct = config.master_volume * 100.0f;
+                    if (ImGui::SliderFloat("Volume", &volume_pct, 0.0f, 100.0f, "%.0f%%",
+                                           ImGuiSliderFlags_AlwaysClamp)) {
+                        config.master_volume = volume_pct / 100.0f;
+                        SDL_SetAudioStreamGain(audio_stream, config.master_volume);
+                    }
+                    if (ImGui::IsItemDeactivatedAfterEdit()) {
+                        config.Save(CONFIG_PATH);
+                    }
+
+                    ImGui::Text("Output level");
+                    ImGui::ProgressBar(audio_level, ImVec2(-FLT_MIN, 0), "");
+
+                    ImGui::Separator();
+
+                    // Re-enumerate while this tab is visible so devices that
+                    // get plugged in / removed show up without a restart.
+                    audio_devices = EnumerateAudioDevices();
+                    const char* preview = config.audio_device.empty()
+                        ? "System Default" : config.audio_device.c_str();
+                    ImGui::Text("Output device");
+                    ImGui::SameLine(120);
+                    ImGui::SetNextItemWidth(320);
+                    if (ImGui::BeginCombo("##audiodevice", preview)) {
+                        if (ImGui::Selectable("System Default", config.audio_device.empty())) {
+                            if (!config.audio_device.empty()) {
+                                config.audio_device.clear();
+                                reopen_audio(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK);
+                                config.Save(CONFIG_PATH);
+                            }
+                        }
+                        for (auto& d : audio_devices) {
+                            bool selected = (config.audio_device == d.name);
+                            if (ImGui::Selectable(d.name.c_str(), selected) && !selected) {
+                                config.audio_device = d.name;
+                                reopen_audio(d.id);
+                                config.Save(CONFIG_PATH);
+                            }
+                        }
+                        ImGui::EndCombo();
+                    }
                     ImGui::EndTabItem();
                 }
 
@@ -424,6 +543,14 @@ int main(int argc, char* argv[]) {
             bus.ppu.frame_complete = false;
 
             if (!bus.audio_samples.empty()) {
+                // APU output is unipolar ~0..0.75; scale the peak up so a
+                // normal-loudness game lights most of the meter, then let the
+                // stream gain fold in the user's volume setting.
+                float peak = 0.0f;
+                for (float s : bus.audio_samples) peak = std::max(peak, std::fabs(s));
+                float level = std::min(1.0f, peak * 1.8f * config.master_volume);
+                audio_level = std::max(audio_level, level);
+
                 SDL_PutAudioStreamData(audio_stream, bus.audio_samples.data(),
                                        (int)(bus.audio_samples.size() * sizeof(float)));
                 bus.audio_samples.clear();

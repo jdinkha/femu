@@ -39,6 +39,9 @@ AppConfig AppConfig::Load(const std::string& path) {
         // Misc
         else if (key == "window_scale") cfg.window_scale = std::stoi(value);
         else if (key == "last_rom_dir") cfg.last_rom_dir = value;
+        // Audio
+        else if (key == "master_volume") cfg.master_volume = std::stof(value);
+        else if (key == "audio_device") cfg.audio_device = value;
     }
     return cfg;
 }
@@ -70,4 +73,7 @@ void AppConfig::Save(const std::string& path) const {
 
     f << "window_scale=" << window_scale << "\n";
     f << "last_rom_dir=" << last_rom_dir << "\n";
+
+    f << "master_volume=" << master_volume << "\n";
+    f << "audio_device=" << audio_device << "\n";
 }

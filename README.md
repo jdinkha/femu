@@ -7,7 +7,7 @@ You'll need:
 
 - **Git**
 - **CMake 3.16+**
-- **A C++17 compiler** — GCC, Clang, or MSVC
+- **A C++17 compiler** - GCC, Clang, or MSVC
 - **SDL3's own build dependencies**, which vary by OS since SDL3 is built from source as a submodule rather than installed as a system package.
 
 ## Building
@@ -29,7 +29,7 @@ cmake .. -DCMAKE_BUILD_TYPE=Release
 cmake --build .
 ```
 
-`-DCMAKE_BUILD_TYPE=Release` matters here — Makefile/Ninja-based builds default to no optimization otherwise, and this is a real-time emulator that needs the headroom.
+`-DCMAKE_BUILD_TYPE=Release` matters here - Makefile/Ninja-based builds default to no optimization otherwise, and this is a real-time emulator that needs the headroom.
 
 ### Windows (Visual Studio)
 

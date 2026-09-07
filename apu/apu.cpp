@@ -1,5 +1,34 @@
 #include "apu.h"
 #include "../mem/bus.h"
+#include "../mem/serialize.h"
+
+void APU::SerializeState(StateWriter& w) const {
+    w.write(pulse1);
+    w.write(pulse2);
+    w.write(triangle);
+    w.write(noise);
+    w.write(dmc);
+    w.write(five_step_mode);
+    w.write(irq_inhibit);
+    w.write(frame_irq);
+    w.write(frame_cycle_counter);
+    w.write(cpu_cycle_count);
+    w.write(last_sample);
+}
+
+void APU::DeserializeState(StateReader& r) {
+    r.read(pulse1);
+    r.read(pulse2);
+    r.read(triangle);
+    r.read(noise);
+    r.read(dmc);
+    r.read(five_step_mode);
+    r.read(irq_inhibit);
+    r.read(frame_irq);
+    r.read(frame_cycle_counter);
+    r.read(cpu_cycle_count);
+    r.read(last_sample);
+}
 
 const std::array<uint8_t, 32> APU::length_table = {
     10,254,20,2,40,4,80,6,160,8,60,10,14,12,26,14,

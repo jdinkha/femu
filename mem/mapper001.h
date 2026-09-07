@@ -22,6 +22,9 @@ public:
     void reset() override;
     Mirror mirror() const override { return mirror_mode; }
 
+    void SerializeState(StateWriter& w) const override;
+    void DeserializeState(StateReader& r) override;
+
 private:
     uint8_t load_register = 0x00;
     uint8_t load_register_count = 0;

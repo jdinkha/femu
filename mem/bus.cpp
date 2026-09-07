@@ -1,4 +1,5 @@
 #include "bus.h"
+#include "serialize.h"
 
 // NES CPU memory map:
 //   $0000-$1FFF  2KB internal RAM, mirrored every $0800
@@ -25,6 +26,36 @@ void Bus::reset() {
     ppu.reset();
     apu.reset();
     system_clock_counter = 0;
+}
+
+void Bus::SerializeState(StateWriter& w) const {
+    w.writeBytes(ram.data(), ram.size());
+    w.write(system_clock_counter);
+    w.write(controller_state[0]);
+    w.write(controller_state[1]);
+    w.write(controller[0]);
+    w.write(controller[1]);
+    w.write(audio_time_accumulator);
+
+    cpu.SerializeState(w);
+    ppu.SerializeState(w);
+    apu.SerializeState(w);
+    if (cartridge) cartridge->SerializeState(w);
+}
+
+void Bus::DeserializeState(StateReader& r) {
+    r.readBytes(ram.data(), ram.size());
+    r.read(system_clock_counter);
+    r.read(controller_state[0]);
+    r.read(controller_state[1]);
+    r.read(controller[0]);
+    r.read(controller[1]);
+    r.read(audio_time_accumulator);
+
+    cpu.DeserializeState(r);
+    ppu.DeserializeState(r);
+    apu.DeserializeState(r);
+    if (cartridge) cartridge->DeserializeState(r);
 }
 
 void Bus::clock() {

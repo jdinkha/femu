@@ -8,6 +8,9 @@
 #include "../ppu/ppu.h"
 #include "../apu/apu.h"
 
+struct StateWriter;
+struct StateReader;
+
 class Bus {
 public:
     Bus();
@@ -19,6 +22,16 @@ public:
     void insertCartridge(const std::shared_ptr<Cartridge>& cart);
     void reset();
     void clock(); // master system clock: steps ppu 3x per 1x cpu, handles NMI
+
+    // Savestate support. SerializeState/DeserializeState round-trip the entire
+    // machine: internal RAM, the system clock divider, latched controller
+    // shift registers, and every subcomponent (CPU, PPU, APU, cartridge
+    // PRG/CHR-RAM + mapper). The ROM and the frontend-supplied `controller`
+    // inputs are not machine state and are left to the caller.
+    bool HasCartridge() const { return cartridge != nullptr; }
+    uint64_t RomHash() const { return cartridge ? cartridge->RomHash() : 0; }
+    void SerializeState(StateWriter& w) const;
+    void DeserializeState(StateReader& r);
 
     uint8_t cpuRead(uint16_t addr);
     void cpuWrite(uint16_t addr, uint8_t data);

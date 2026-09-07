@@ -21,6 +21,8 @@ struct KeyBindings {
 // each is just one more field here plus one more row in the Hotkeys panel.
 struct HotkeyBindings {
     SDL_Scancode fullscreen = SDL_SCANCODE_F11;
+    SDL_Scancode save_state = SDL_SCANCODE_F5; // quick-save to <rom>.state
+    SDL_Scancode load_state = SDL_SCANCODE_F7; // quick-load from <rom>.state
 };
 
 struct AppConfig {

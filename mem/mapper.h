@@ -1,6 +1,9 @@
 #pragma once
 #include <cstdint>
 
+struct StateWriter;
+struct StateReader;
+
 // HARDWARE means "this mapper doesn't control mirroring itself - use
 // whatever the iNES header said." NROM relies on this; MMC1 and MMC3 both
 // override mirror() to report their own dynamically-selected mode instead.
@@ -27,6 +30,13 @@ public:
     virtual bool ppuMapWrite(uint16_t addr, uint32_t& mapped_addr) = 0;
 
     virtual void reset() {}
+
+    // Savestate hooks for mapper bank-switching / IRQ state. The default is a
+    // no-op, which is exactly right for fixed mappers like NROM; MMC1 and MMC3
+    // override these to persist their registers. nPRGBanks / nCHRBanks come
+    // from the ROM and are never serialized.
+    virtual void SerializeState(StateWriter&) const {}
+    virtual void DeserializeState(StateReader&) {}
 
     // Most mappers don't touch mirroring or PRG-RAM gating; MMC1/MMC3 override these.
     virtual Mirror mirror() const { return Mirror::HARDWARE; }

@@ -2,6 +2,7 @@
 #include "mapper000.h"
 #include "mapper001.h"
 #include "mapper004.h"
+#include "serialize.h"
 #include <fstream>
 #include <filesystem>
 
@@ -70,7 +71,35 @@ Cartridge::Cartridge(const std::string& path) {
         }
     }
 
+    // FNV-1a over the immutable ROM data; savestates use this to refuse
+    // loading against the wrong game.
+    rom_hash = 1469598103934665603ULL;
+    auto hash_bytes = [this](const std::vector<uint8_t>& v) {
+        for (uint8_t byte : v) {
+            rom_hash ^= byte;
+            rom_hash *= 1099511628211ULL;
+        }
+    };
+    hash_bytes(prgMemory);
+    hash_bytes(chrMemory);
+    rom_hash ^= mapperID;
+    rom_hash *= 1099511628211ULL;
+
     valid = true;
+}
+
+void Cartridge::SerializeState(StateWriter& w) const {
+    w.writeBytes(prg_ram.data(), prg_ram.size());
+    if (nCHRBanks == 0) // CHR-RAM: mutable, must be saved (CHR-ROM never changes)
+        w.writeBytes(chrMemory.data(), chrMemory.size());
+    if (mapper) mapper->SerializeState(w);
+}
+
+void Cartridge::DeserializeState(StateReader& r) {
+    r.readBytes(prg_ram.data(), prg_ram.size());
+    if (nCHRBanks == 0)
+        r.readBytes(chrMemory.data(), chrMemory.size());
+    if (mapper) mapper->DeserializeState(r);
 }
 
 Cartridge::~Cartridge() {

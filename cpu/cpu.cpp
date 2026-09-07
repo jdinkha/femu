@@ -1,6 +1,19 @@
 #include "cpu.h"
 #include "../mem/bus.h"
+#include "../mem/serialize.h"
 #include <cstdio>
+
+void CPU::SerializeState(StateWriter& w) const {
+    w.write(A); w.write(X); w.write(Y); w.write(SP); w.write(PC); w.write(status);
+    w.write(fetched); w.write(addr_abs); w.write(addr_rel); w.write(opcode);
+    w.write(cycles); w.write(clock_count); w.write(acc_mode);
+}
+
+void CPU::DeserializeState(StateReader& r) {
+    r.read(A); r.read(X); r.read(Y); r.read(SP); r.read(PC); r.read(status);
+    r.read(fetched); r.read(addr_abs); r.read(addr_rel); r.read(opcode);
+    r.read(cycles); r.read(clock_count); r.read(acc_mode);
+}
 
 uint8_t CPU::cpuRead(uint16_t addr)              { return bus->cpuRead(addr); }
 void    CPU::cpuWrite(uint16_t addr, uint8_t d)  { bus->cpuWrite(addr, d); }

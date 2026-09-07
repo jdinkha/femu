@@ -27,6 +27,7 @@ add_executable(femu
     ui/config.cpp
     cpu/cpu.cpp
     mem/bus.cpp
+    mem/savestate.cpp
     mem/cartridge.cpp
     mem/mapper000.cpp
     mem/mapper001.cpp

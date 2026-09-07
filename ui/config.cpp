@@ -36,6 +36,8 @@ AppConfig AppConfig::Load(const std::string& path) {
         else if (key == "controller2_enabled") cfg.controller2_enabled = (std::stoi(value) != 0);
         // Hotkeys
         else if (key == "hotkey_fullscreen") cfg.hotkeys.fullscreen = (SDL_Scancode)std::stoi(value);
+        else if (key == "hotkey_save_state") cfg.hotkeys.save_state = (SDL_Scancode)std::stoi(value);
+        else if (key == "hotkey_load_state") cfg.hotkeys.load_state = (SDL_Scancode)std::stoi(value);
         // Misc
         else if (key == "window_scale") cfg.window_scale = std::stoi(value);
         else if (key == "last_rom_dir") cfg.last_rom_dir = value;
@@ -70,6 +72,8 @@ void AppConfig::Save(const std::string& path) const {
     f << "controller2_enabled=" << (controller2_enabled ? 1 : 0) << "\n";
 
     f << "hotkey_fullscreen=" << (int)hotkeys.fullscreen << "\n";
+    f << "hotkey_save_state=" << (int)hotkeys.save_state << "\n";
+    f << "hotkey_load_state=" << (int)hotkeys.load_state << "\n";
 
     f << "window_scale=" << window_scale << "\n";
     f << "last_rom_dir=" << last_rom_dir << "\n";

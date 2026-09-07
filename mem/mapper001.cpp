@@ -1,4 +1,29 @@
 #include "mapper001.h"
+#include "serialize.h"
+
+void Mapper_001::SerializeState(StateWriter& w) const {
+    w.write(load_register);
+    w.write(load_register_count);
+    w.write(control_register);
+    w.write(chr_bank_select_4lo);
+    w.write(chr_bank_select_4hi);
+    w.write(chr_bank_select_8);
+    w.write(prg_bank_select_16);
+    w.write(prg_bank_select_32);
+    w.write(mirror_mode);
+}
+
+void Mapper_001::DeserializeState(StateReader& r) {
+    r.read(load_register);
+    r.read(load_register_count);
+    r.read(control_register);
+    r.read(chr_bank_select_4lo);
+    r.read(chr_bank_select_4hi);
+    r.read(chr_bank_select_8);
+    r.read(prg_bank_select_16);
+    r.read(prg_bank_select_32);
+    r.read(mirror_mode);
+}
 
 void Mapper_001::reset() {
     load_register = 0x00;

@@ -1,4 +1,5 @@
 #include "ppu.h"
+#include "../mem/serialize.h"
 
 const std::array<uint8_t, 64 * 3> PPU::paletteRGB = { {
     84,84,84,    0,30,116,   8,16,144,   48,0,136,   68,0,100,   92,0,48,    84,4,0,     60,24,0,
@@ -12,6 +13,80 @@ const std::array<uint8_t, 64 * 3> PPU::paletteRGB = { {
 } };
 
 PPU::PPU() {}
+
+void PPU::SerializeState(StateWriter& w) const {
+    w.writeBytes(nameTable.data(), sizeof(nameTable));
+    w.writeBytes(paletteTable.data(), sizeof(paletteTable));
+
+    w.write(control.reg);
+    w.write(mask.reg);
+    w.write(status.reg);
+    w.write(vram_addr.reg);
+    w.write(tram_addr.reg);
+    w.write(fine_x);
+    w.write(address_latch);
+    w.write(ppu_data_buffer);
+    w.write(oam_addr);
+    w.writeBytes(OAM.data(), sizeof(OAM));
+
+    w.write(scanline);
+    w.write(cycle);
+    w.write(bg_next_tile_id);
+    w.write(bg_next_tile_attrib);
+    w.write(bg_next_tile_lsb);
+    w.write(bg_next_tile_msb);
+    w.write(bg_shifter_pattern_lo);
+    w.write(bg_shifter_pattern_hi);
+    w.write(bg_shifter_attrib_lo);
+    w.write(bg_shifter_attrib_hi);
+
+    w.writeBytes(spriteScanline.data(), sizeof(spriteScanline));
+    w.write(sprite_count);
+    w.writeBytes(sprite_shifter_pattern_lo.data(), sizeof(sprite_shifter_pattern_lo));
+    w.writeBytes(sprite_shifter_pattern_hi.data(), sizeof(sprite_shifter_pattern_hi));
+    w.write(bSpriteZeroHitPossible);
+    w.write(bSpriteZeroBeingRendered);
+
+    w.write(frame_complete);
+    w.write(nmi);
+}
+
+void PPU::DeserializeState(StateReader& r) {
+    r.readBytes(nameTable.data(), sizeof(nameTable));
+    r.readBytes(paletteTable.data(), sizeof(paletteTable));
+
+    r.read(control.reg);
+    r.read(mask.reg);
+    r.read(status.reg);
+    r.read(vram_addr.reg);
+    r.read(tram_addr.reg);
+    r.read(fine_x);
+    r.read(address_latch);
+    r.read(ppu_data_buffer);
+    r.read(oam_addr);
+    r.readBytes(OAM.data(), sizeof(OAM));
+
+    r.read(scanline);
+    r.read(cycle);
+    r.read(bg_next_tile_id);
+    r.read(bg_next_tile_attrib);
+    r.read(bg_next_tile_lsb);
+    r.read(bg_next_tile_msb);
+    r.read(bg_shifter_pattern_lo);
+    r.read(bg_shifter_pattern_hi);
+    r.read(bg_shifter_attrib_lo);
+    r.read(bg_shifter_attrib_hi);
+
+    r.readBytes(spriteScanline.data(), sizeof(spriteScanline));
+    r.read(sprite_count);
+    r.readBytes(sprite_shifter_pattern_lo.data(), sizeof(sprite_shifter_pattern_lo));
+    r.readBytes(sprite_shifter_pattern_hi.data(), sizeof(sprite_shifter_pattern_hi));
+    r.read(bSpriteZeroHitPossible);
+    r.read(bSpriteZeroBeingRendered);
+
+    r.read(frame_complete);
+    r.read(nmi);
+}
 
 void PPU::ConnectCartridge(const std::shared_ptr<Cartridge>& c) { cart = c; }
 

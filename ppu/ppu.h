@@ -4,6 +4,9 @@
 #include <memory>
 #include "../mem/cartridge.h"
 
+struct StateWriter;
+struct StateReader;
+
 // 2C02 Picture Processing Unit.
 //
 // This first pass implements: register interface, VRAM/palette/OAM memory,
@@ -23,6 +26,14 @@ public:
     void ConnectCartridge(const std::shared_ptr<Cartridge>& cart);
     void reset();
     void clock();
+
+    // Savestate hooks. Persists VRAM/palette/OAM plus the entire mid-frame
+    // rendering pipeline (scanline/cycle position, the background and sprite
+    // shifters, sprite-0-hit latches) so a state resumes on the exact dot it
+    // was saved on. The framebuffer itself is not saved - the next full frame
+    // regenerates it - and neither is the master palette (a static table).
+    void SerializeState(StateWriter& w) const;
+    void DeserializeState(StateReader& r);
 
     // CPU-facing register interface. addr is already demirrored to 0-7 by Bus.
     uint8_t cpuRead(uint16_t addr, bool readOnly = false);

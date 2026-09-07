@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cfloat>
 #include <cmath>
+#include <ctime>
 #include <algorithm>
 #include <memory>
 #include <string>
@@ -13,6 +14,7 @@
 #include <filesystem>
 
 #include "mem/bus.h"
+#include "mem/savestate.h"
 #include "ui/config.h"
 
 namespace fs = std::filesystem;
@@ -21,6 +23,7 @@ static constexpr int NES_WIDTH = 256;
 static constexpr int NES_HEIGHT = 240;
 static constexpr const char* CONFIG_PATH = "femu_config.txt";
 static constexpr double OVERLAY_HINT_SECONDS = 5.0;
+static constexpr double STATUS_MESSAGE_SECONDS = 2.5; // transient "State saved" / error toast
 
 enum class AppState { MENU, RUNNING };
 
@@ -267,6 +270,29 @@ int main(int argc, char* argv[]) {
     double overlay_hint_timer = 0.0; // counts down from OVERLAY_HINT_SECONDS after a fresh boot
     double save_ram_timer = 0.0;     // counts up; periodic save protects against crashes/force-quits
 
+    std::string status_message;      // transient toast (savestate feedback)
+    double status_message_timer = 0.0;
+    auto set_status = [&](const std::string& msg) {
+        status_message = msg;
+        status_message_timer = STATUS_MESSAGE_SECONDS;
+    };
+
+    // Quick-save / quick-load the current game's default savestate slot
+    // (<rom>.state, next to the ROM). Both require a game to be loaded - a
+    // savestate is meaningless without a live machine to capture, or a
+    // matching game to restore into - but "loaded" includes a game that's
+    // merely paused behind the menu.
+    auto quick_save_state = [&]() {
+        if (!cart) return;
+        std::string err = savestate::Save(bus, savestate::DefaultPath(current_rom_path));
+        set_status(err.empty() ? "State saved" : ("Save failed: " + err));
+    };
+    auto quick_load_state = [&]() {
+        if (!cart) return;
+        std::string err = savestate::Load(bus, savestate::DefaultPath(current_rom_path));
+        set_status(err.empty() ? "State loaded" : ("Load failed: " + err));
+    };
+
     // Per-controller D-pad state, tracking press order across frames so
     // opposing directions can be resolved last-pressed-wins.
     DPadState dpad1, dpad2;
@@ -335,6 +361,12 @@ int main(int argc, char* argv[]) {
                 } else if (!event.key.repeat && event.key.scancode == config.hotkeys.fullscreen) {
                     is_fullscreen = !is_fullscreen;
                     SDL_SetWindowFullscreen(window, is_fullscreen);
+                } else if (!event.key.repeat && config.hotkeys.save_state != SDL_SCANCODE_UNKNOWN
+                           && event.key.scancode == config.hotkeys.save_state) {
+                    quick_save_state();
+                } else if (!event.key.repeat && config.hotkeys.load_state != SDL_SCANCODE_UNKNOWN
+                           && event.key.scancode == config.hotkeys.load_state) {
+                    quick_load_state();
                 } else if (event.key.key == SDLK_ESCAPE) {
                     // Toggle, not "always go to menu": ESC opens the menu
                     // from gameplay, and - since that's the intuitive
@@ -359,6 +391,18 @@ int main(int argc, char* argv[]) {
         // Decay the volume meter every frame; the running emulator bumps it
         // back up below. ~0.82/frame gives a springy-but-readable falloff.
         audio_level *= 0.82f;
+
+        // Transient savestate toast, shown over both the game and the menu.
+        if (status_message_timer > 0.0) {
+            status_message_timer -= TARGET_FRAME_SECONDS;
+            ImGui::SetNextWindowBgAlpha(0.45f);
+            ImGui::SetNextWindowPos(ImVec2(8, 30));
+            ImGui::Begin("##statustoast", nullptr,
+                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing);
+            ImGui::TextUnformatted(status_message.c_str());
+            ImGui::End();
+        }
 
         if (state == AppState::MENU) {
             ImGui::SetNextWindowSize(ImVec2(560, 460), ImGuiCond_FirstUseEver);
@@ -470,6 +514,8 @@ int main(int argc, char* argv[]) {
                 }
 
                 if (ImGui::BeginTabItem("Controls")) {
+                    ImGui::TextDisabled("Click a box to rebind it; middle-click to unbind it.");
+                    ImGui::Spacing();
                     ImGui::Text("Controller 1");
                     for (int i = 0; i < 8; i++) {
                         SDL_Scancode* targets1[8] = {
@@ -479,10 +525,16 @@ int main(int argc, char* argv[]) {
                         ImGui::PushID(targets1[i]); // field's own address = a free unique ID
                         ImGui::Text("%s", button_names[i]);
                         ImGui::SameLine(120);
-                        std::string btn_label = (currently_rebinding == targets1[i])
-                            ? "press a key..." : SDL_GetScancodeName(*targets1[i]);
+                        std::string btn_label = (currently_rebinding == targets1[i]) ? "press a key..."
+                            : (*targets1[i] == SDL_SCANCODE_UNKNOWN) ? "(unbound)"
+                            : SDL_GetScancodeName(*targets1[i]);
                         if (ImGui::Button(btn_label.c_str(), ImVec2(160, 0))) {
                             currently_rebinding = targets1[i];
+                        }
+                        if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
+                            *targets1[i] = SDL_SCANCODE_UNKNOWN;
+                            if (currently_rebinding == targets1[i]) currently_rebinding = nullptr;
+                            config.Save(CONFIG_PATH);
                         }
                         ImGui::PopID();
                     }
@@ -499,10 +551,16 @@ int main(int argc, char* argv[]) {
                             ImGui::PushID(targets2[i]);
                             ImGui::Text("%s", button_names[i]);
                             ImGui::SameLine(120);
-                            std::string btn_label = (currently_rebinding == targets2[i])
-                                ? "press a key..." : SDL_GetScancodeName(*targets2[i]);
+                            std::string btn_label = (currently_rebinding == targets2[i]) ? "press a key..."
+                                : (*targets2[i] == SDL_SCANCODE_UNKNOWN) ? "(unbound)"
+                                : SDL_GetScancodeName(*targets2[i]);
                             if (ImGui::Button(btn_label.c_str(), ImVec2(160, 0))) {
                                 currently_rebinding = targets2[i];
+                            }
+                            if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
+                                *targets2[i] = SDL_SCANCODE_UNKNOWN;
+                                if (currently_rebinding == targets2[i]) currently_rebinding = nullptr;
+                                config.Save(CONFIG_PATH);
                             }
                             ImGui::PopID();
                         }
@@ -511,19 +569,95 @@ int main(int argc, char* argv[]) {
                 }
 
                 if (ImGui::BeginTabItem("Hotkeys")) {
-                    // Save state / load state / volume are natural next
-                    // additions here once those features exist - each is
-                    // just one more field in HotkeyBindings plus one more
-                    // row below, same pattern as Fullscreen.
-                    ImGui::PushID(&config.hotkeys.fullscreen);
-                    ImGui::Text("Fullscreen");
-                    ImGui::SameLine(120);
-                    std::string fs_label = (currently_rebinding == &config.hotkeys.fullscreen)
-                        ? "press a key..." : SDL_GetScancodeName(config.hotkeys.fullscreen);
-                    if (ImGui::Button(fs_label.c_str(), ImVec2(160, 0))) {
-                        currently_rebinding = &config.hotkeys.fullscreen;
+                    ImGui::TextDisabled("Click a box to rebind it; middle-click to unbind it.");
+                    ImGui::Spacing();
+
+                    auto hotkey_row = [&](const char* label, SDL_Scancode* target) {
+                        ImGui::PushID(target);
+                        ImGui::Text("%s", label);
+                        ImGui::SameLine(120);
+                        std::string lbl = (currently_rebinding == target) ? "press a key..."
+                            : (*target == SDL_SCANCODE_UNKNOWN) ? "(unbound)"
+                            : SDL_GetScancodeName(*target);
+                        if (ImGui::Button(lbl.c_str(), ImVec2(160, 0))) {
+                            currently_rebinding = target;
+                        }
+                        if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
+                            *target = SDL_SCANCODE_UNKNOWN;
+                            if (currently_rebinding == target) currently_rebinding = nullptr;
+                            config.Save(CONFIG_PATH);
+                        }
+                        ImGui::PopID();
+                    };
+
+                    hotkey_row("Fullscreen", &config.hotkeys.fullscreen);
+                    hotkey_row("Save State", &config.hotkeys.save_state);
+                    hotkey_row("Load State", &config.hotkeys.load_state);
+                    ImGui::EndTabItem();
+                }
+
+                if (ImGui::BeginTabItem("Savestates")) {
+                    if (!cart) {
+                        ImGui::TextWrapped(
+                            "Load a game to save or load its states.\n\n"
+                            "Savestates are written next to the ROM with a \".state\" "
+                            "extension and can only be loaded back into the exact game "
+                            "they were created from.");
+                    } else {
+                        ImGui::Text("Game: %s",
+                                    fs::path(current_rom_path).stem().string().c_str());
+                        if (ImGui::Button("Save State")) quick_save_state();
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("(%s saves, %s loads)",
+                            SDL_GetScancodeName(config.hotkeys.save_state),
+                            SDL_GetScancodeName(config.hotkeys.load_state));
+
+                        ImGui::Separator();
+                        ImGui::TextUnformatted("Savestates for this game's folder:");
+                        ImGui::Spacing();
+
+                        fs::path dir = fs::path(current_rom_path).parent_path();
+                        if (dir.empty()) dir = ".";
+                        uint64_t current_hash = bus.RomHash();
+                        std::error_code ec;
+                        bool any = false;
+                        for (auto& entry : fs::directory_iterator(dir, ec)) {
+                            if (!entry.is_regular_file() ||
+                                entry.path().extension() != ".state") continue;
+                            any = true;
+
+                            std::string path = entry.path().string();
+                            savestate::Info info = savestate::Peek(path);
+                            bool loadable = info.valid && info.rom_hash == current_hash;
+
+                            ImGui::PushID(path.c_str());
+                            ImGui::BeginDisabled(!loadable);
+                            if (ImGui::Button("Load")) {
+                                std::string err = savestate::Load(bus, path);
+                                set_status(err.empty() ? "State loaded"
+                                                       : ("Load failed: " + err));
+                                if (err.empty()) state = AppState::RUNNING;
+                            }
+                            ImGui::EndDisabled();
+                            ImGui::SameLine();
+
+                            std::string name = entry.path().filename().string();
+                            if (!info.valid) {
+                                ImGui::Text("%s  -  not a femu savestate", name.c_str());
+                            } else if (!loadable) {
+                                ImGui::Text("%s  -  different game", name.c_str());
+                            } else {
+                                char when[32] = "unknown time";
+                                std::time_t t = (std::time_t)info.saved_unix;
+                                if (std::tm* lt = std::localtime(&t))
+                                    std::strftime(when, sizeof(when), "%Y-%m-%d %H:%M", lt);
+                                ImGui::Text("%s  -  %s", name.c_str(), when);
+                            }
+                            ImGui::PopID();
+                        }
+                        if (!any)
+                            ImGui::TextDisabled("No .state files in %s", dir.string().c_str());
                     }
-                    ImGui::PopID();
                     ImGui::EndTabItem();
                 }
 

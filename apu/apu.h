@@ -3,6 +3,8 @@
 #include <array>
 
 class Bus;
+struct StateWriter;
+struct StateReader;
 
 // 2A03 Audio Processing Unit.
 //
@@ -22,6 +24,11 @@ public:
 
     void clock(); // call once per CPU cycle
     void reset();
+
+    // Savestate hooks. Every channel struct and the frame sequencer are plain
+    // aggregates of scalars, so this just blits them wholesale.
+    void SerializeState(StateWriter& w) const;
+    void DeserializeState(StateReader& r);
 
     // True if either the frame sequencer or the DMC wants to raise an IRQ.
     // Bus checks this every clock and calls cpu.irq() - safe to call

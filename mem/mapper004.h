@@ -20,6 +20,9 @@ public:
     Mirror mirror() const override { return mirror_mode; }
     bool prgRamEnabled() const override { return prg_ram_enabled; }
 
+    void SerializeState(StateWriter& w) const override;
+    void DeserializeState(StateReader& r) override;
+
     bool irqState() const override { return irq_pending; }
     void irqClear() override { irq_pending = false; }
     void ScanlineIRQ() override;

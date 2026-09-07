@@ -1,4 +1,37 @@
 #include "mapper004.h"
+#include "serialize.h"
+
+void Mapper_004::SerializeState(StateWriter& w) const {
+    w.write(target_register);
+    w.write(prg_bank_mode);
+    w.write(chr_a12_invert);
+    w.writeBytes(reg.data(), sizeof(reg));
+    w.writeBytes(chr_bank_1k, sizeof(chr_bank_1k));
+    w.writeBytes(prg_bank_8k, sizeof(prg_bank_8k));
+    w.write(mirror_mode);
+    w.write(prg_ram_enabled);
+    w.write(irq_enabled);
+    w.write(irq_reload);
+    w.write(irq_latch);
+    w.write(irq_counter);
+    w.write(irq_pending);
+}
+
+void Mapper_004::DeserializeState(StateReader& r) {
+    r.read(target_register);
+    r.read(prg_bank_mode);
+    r.read(chr_a12_invert);
+    r.readBytes(reg.data(), sizeof(reg));
+    r.readBytes(chr_bank_1k, sizeof(chr_bank_1k));
+    r.readBytes(prg_bank_8k, sizeof(prg_bank_8k));
+    r.read(mirror_mode);
+    r.read(prg_ram_enabled);
+    r.read(irq_enabled);
+    r.read(irq_reload);
+    r.read(irq_latch);
+    r.read(irq_counter);
+    r.read(irq_pending);
+}
 
 void Mapper_004::reset() {
     target_register = 0;

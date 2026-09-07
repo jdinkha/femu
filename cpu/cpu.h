@@ -4,6 +4,8 @@
 #include <string>
 
 class Bus;
+struct StateWriter;
+struct StateReader;
 
 // MOS 6502 (2A03) CPU core - official instruction set only.
 // Illegal/undocumented opcodes are stubbed as XXX (no-op) for now;
@@ -50,6 +52,14 @@ public:
 
     uint32_t GetClockCount() const { return clock_count; }
     void     SetClockCount(uint32_t v) { clock_count = v; } // for aligning trace CYC with a reference log
+
+    // Savestate hooks. These persist the full architectural + mid-instruction
+    // state (registers plus the addressing scratch the current opcode is
+    // partway through), so a state saved between any two clocks resumes
+    // exactly. The `lookup` table is rebuilt by the constructor and never
+    // changes, so it isn't serialized.
+    void SerializeState(StateWriter& w) const;
+    void DeserializeState(StateReader& r);
 
     // Peek-only disassembly of the instruction at addr - never advances PC,
     // never calls fetch(), never writes anything. Used by the nestest

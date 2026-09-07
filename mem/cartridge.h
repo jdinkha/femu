@@ -5,6 +5,9 @@
 #include <memory>
 #include "mapper.h"
 
+struct StateWriter;
+struct StateReader;
+
 class Cartridge {
 public:
     explicit Cartridge(const std::string& path);
@@ -27,6 +30,17 @@ public:
     bool hasBattery() const { return battery_backed; }
     void SaveRAM() const; // writes prg_ram to sav_path if battery_backed
 
+    // Stable fingerprint of the ROM's PRG+CHR contents (plus mapper ID),
+    // computed once at load. Savestates embed this so a state can only be
+    // reloaded against the game it was made from.
+    uint64_t RomHash() const { return rom_hash; }
+
+    // Savestate hooks: the mutable parts of the cartridge - PRG-RAM, CHR-RAM
+    // (only when the board has no CHR-ROM), and the mapper's registers. PRG-ROM
+    // and CHR-ROM are immutable and covered by RomHash() instead.
+    void SerializeState(StateWriter& w) const;
+    void DeserializeState(StateReader& r);
+
 private:
     bool valid = false;
     uint8_t mapperID = 0;
@@ -45,4 +59,6 @@ private:
     std::vector<uint8_t> prg_ram;
     bool battery_backed = false;
     std::string sav_path;
+
+    uint64_t rom_hash = 0;
 };

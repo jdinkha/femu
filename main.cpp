@@ -90,6 +90,52 @@ static SDL_FRect ComputeDestRect(int window_w, int window_h) {
     return r;
 }
 
+// Resize (if needed) and reposition `window` so it fits inside the primary
+// display's usable area with its title bar on-screen.
+//
+// This matters most on Windows: when a window is taller than the usable
+// desktop, SDL falls back to centering it on the *full* monitor bounds, which
+// puts `y` at a negative value and pushes the whole title bar (close /
+// minimize / maximize buttons) above the top of the screen where it can't be
+// reached. femu sizes its window as a fixed multiple of 240px, so a 3x or 4x
+// window easily overflows a laptop display once the taskbar and window frame
+// are accounted for. Clamping the size and recentering keeps the caption
+// visible on every platform.
+static void FitWindowToDisplay(SDL_Window* window, int desired_w, int desired_h) {
+    SDL_DisplayID display = SDL_GetDisplayForWindow(window);
+    if (!display) display = SDL_GetPrimaryDisplay();
+
+    SDL_Rect usable{};
+    if (!display || !SDL_GetDisplayUsableBounds(display, &usable)) {
+        SDL_SetWindowSize(window, desired_w, desired_h);
+        return;
+    }
+
+    // Window-frame thickness (title bar + borders). Zero until the window has
+    // been shown on some backends, so fall back to a generous estimate.
+    int top = 0, left = 0, bottom = 0, right = 0;
+    SDL_GetWindowBordersSize(window, &top, &left, &bottom, &right);
+    if (top == 0 && bottom == 0) { top = 40; }
+    const int frame_w = left + right;
+    const int frame_h = top + bottom;
+
+    int w = desired_w, h = desired_h;
+    if (w + frame_w > usable.w) w = usable.w - frame_w;
+    if (h + frame_h > usable.h) h = usable.h - frame_h;
+    if (w < NES_WIDTH)  w = NES_WIDTH;   // never shrink below 1x
+    if (h < NES_HEIGHT) h = NES_HEIGHT;
+    SDL_SetWindowSize(window, w, h);
+
+    // Center within the usable area, but never let the top of the frame go
+    // above the usable region - a title bar you can see beats a perfectly
+    // centered one you can't.
+    int x = usable.x + (usable.w - w - frame_w) / 2 + left;
+    int y = usable.y + (usable.h - h - frame_h) / 2 + top;
+    if (x < usable.x + left) x = usable.x + left;
+    if (y < usable.y + top)  y = usable.y + top;
+    SDL_SetWindowPosition(window, x, y);
+}
+
 // Reflects the currently loaded ROM in the window's title bar, e.g.
 // "femu - Super Mario Bros" while Super Mario Bros.nes is loaded, falling
 // back to plain "femu" when no game is loaded.
@@ -224,6 +270,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     SDL_SetRenderVSync(renderer, 0); // we pace frames ourselves below
+
+    // Keep the window (and its title bar) fully on-screen - see FitWindowToDisplay.
+    SDL_SyncWindow(window); // let the frame size settle so borders report correctly
+    FitWindowToDisplay(window, NES_WIDTH * config.window_scale, NES_HEIGHT * config.window_scale);
 
     SDL_Texture* texture = SDL_CreateTexture(
         renderer, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, NES_WIDTH, NES_HEIGHT);
@@ -458,7 +508,7 @@ int main(int argc, char* argv[]) {
                         if (ImGui::Button(label)) {
                             config.window_scale = s;
                             if (!is_fullscreen) {
-                                SDL_SetWindowSize(window, NES_WIDTH * s, NES_HEIGHT * s);
+                                FitWindowToDisplay(window, NES_WIDTH * s, NES_HEIGHT * s);
                             }
                             config.Save(CONFIG_PATH);
                         }

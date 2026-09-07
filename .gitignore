@@ -27,6 +27,12 @@
 *.sqlite
 *.db
 
+# Emulator-generated per-ROM files #
+####################################
+*.sav
+*.state
+*.state.tmp
+
 # OS generated files #
 ######################
 .DS_Store

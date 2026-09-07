@@ -37,3 +37,17 @@ add_executable(femu
 )
 
 target_link_libraries(femu PRIVATE SDL3::SDL3 imgui)
+
+# SDL3 builds as a shared library (SDL3.dll) by default on Windows, and the
+# .exe needs that DLL sitting in the same folder to launch at all - CMake
+# doesn't do this automatically, it's on you to place it there. This copies
+# it next to femu.exe after every build, using generator expressions so it
+# resolves correctly whether you're building Debug or Release.
+if (WIN32)
+    add_custom_command(TARGET femu POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:SDL3::SDL3>
+            $<TARGET_FILE_DIR:femu>
+        COMMENT "Copying SDL3.dll next to femu.exe"
+    )
+endif()

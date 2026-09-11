@@ -21,7 +21,13 @@ namespace fs = std::filesystem;
 
 static constexpr int NES_WIDTH = 256;
 static constexpr int NES_HEIGHT = 240;
-static constexpr const char* CONFIG_PATH = "femu_config.txt";
+
+// Set once in main() to an absolute path next to the femu executable - see
+// ExeDir(). Declared here (rather than threaded through as a parameter)
+// because the SDL file-dialog callbacks below are plain free functions that
+// need it too.
+static std::string CONFIG_PATH = "femu_config.txt";
+
 static constexpr double OVERLAY_HINT_SECONDS = 5.0;
 static constexpr double STATUS_MESSAGE_SECONDS = 2.5; // transient "State saved" / error toast
 
@@ -136,6 +142,46 @@ static void FitWindowToDisplay(SDL_Window* window, int desired_w, int desired_h)
     SDL_SetWindowPosition(window, x, y);
 }
 
+// The windowed (non-fullscreen) size to use: an explicit width/height picked
+// from the resolution dropdown if set, otherwise the 1x-4x scale multiple.
+static void WindowedSize(const AppConfig& config, int& w, int& h) {
+    if (config.window_width > 0 && config.window_height > 0) {
+        w = config.window_width;
+        h = config.window_height;
+    } else {
+        w = NES_WIDTH  * config.window_scale;
+        h = NES_HEIGHT * config.window_scale;
+    }
+}
+
+struct Resolution { int w, h; };
+
+// Common 4:3 resolutions, deliberately fixed at 4:3 regardless of the user's
+// monitor shape - that's the NES's own corrected display aspect (what it
+// actually looked like on a contemporary CRT), not a match to the desktop's
+// native aspect ratio.
+static const Resolution COMMON_RESOLUTIONS[] = {
+    { 640, 480 }, { 800, 600 }, { 1024, 768 }, { 1152, 864 },
+    { 1280, 960 }, { 1400, 1050 }, { 1600, 1200 }, { 1920, 1440 }, { 2048, 1536 },
+};
+
+// The 4:3 resolutions above that fit within the display's desktop resolution,
+// smallest first - so the list never offers something bigger than the screen.
+static std::vector<Resolution> CommonResolutionsForDisplay(SDL_DisplayID display) {
+    const SDL_DisplayMode* mode = SDL_GetDesktopDisplayMode(display);
+    const int screen_w = mode ? mode->w : 1920;
+    const int screen_h = mode ? mode->h : 1080;
+
+    std::vector<Resolution> out;
+    for (const Resolution& r : COMMON_RESOLUTIONS) {
+        if (r.w <= screen_w && r.h <= screen_h) out.push_back(r);
+    }
+    std::sort(out.begin(), out.end(), [](const Resolution& a, const Resolution& b) {
+        return (long long)a.w * a.h < (long long)b.w * b.h;
+    });
+    return out;
+}
+
 // Reflects the currently loaded ROM in the window's title bar, e.g.
 // "femu - Super Mario Bros" while Super Mario Bros.nes is loaded, falling
 // back to plain "femu" when no game is loaded.
@@ -190,6 +236,19 @@ static SDL_AudioStream* OpenAudioStream(SDL_AudioDeviceID device) {
     SDL_AudioStream* stream = SDL_OpenAudioDeviceStream(device, &spec, nullptr, nullptr);
     if (stream) SDL_ResumeAudioStreamDevice(stream);
     return stream;
+}
+
+// Directory containing the femu executable itself, trailing separator
+// included (or "" if SDL can't determine it). femu_config.txt and imgui.ini
+// are both anchored here rather than left as bare relative filenames, so they
+// always land in the same place next to the binary regardless of what
+// directory the app was launched from (e.g. "./femu" from the project root
+// vs "./build/femu" from inside build/) - a bare relative path resolves
+// against the current working directory instead, which is what used to
+// scatter them wherever the shell happened to be.
+static std::string ExeDir() {
+    if (const char* base = SDL_GetBasePath()) return base;
+    return "";
 }
 
 static void RefreshRomList(std::vector<std::string>& rom_files, const std::string& dir) {
@@ -249,13 +308,19 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    const std::string exe_dir = ExeDir();
+    CONFIG_PATH = exe_dir + "femu_config.txt";
+    const std::string imgui_ini_path = exe_dir + "imgui.ini";
+
     AppConfig config = AppConfig::Load(CONFIG_PATH);
 
-    SDL_Window* window = SDL_CreateWindow(
-        "femu",
-        NES_WIDTH * config.window_scale, NES_HEIGHT * config.window_scale,
-        SDL_WINDOW_RESIZABLE
-    );
+    int init_w = 0, init_h = 0;
+    WindowedSize(config, init_w, init_h);
+
+    // Not resizable by dragging - window size is chosen from the Display tab
+    // (scale buttons or resolution dropdown) instead, which still resize the
+    // window programmatically via FitWindowToDisplay/SDL_SetWindowSize.
+    SDL_Window* window = SDL_CreateWindow("femu", init_w, init_h, 0);
     if (!window) {
         std::fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
         SDL_Quit();
@@ -273,7 +338,7 @@ int main(int argc, char* argv[]) {
 
     // Keep the window (and its title bar) fully on-screen - see FitWindowToDisplay.
     SDL_SyncWindow(window); // let the frame size settle so borders report correctly
-    FitWindowToDisplay(window, NES_WIDTH * config.window_scale, NES_HEIGHT * config.window_scale);
+    FitWindowToDisplay(window, init_w, init_h);
 
     SDL_Texture* texture = SDL_CreateTexture(
         renderer, SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING, NES_WIDTH, NES_HEIGHT);
@@ -308,6 +373,11 @@ int main(int argc, char* argv[]) {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    // Default is the bare relative name "imgui.ini", which - like
+    // femu_config.txt - would otherwise land wherever the CWD happens to be;
+    // anchor it next to the executable instead. Must stay alive for the whole
+    // program: ImGui only stores this pointer and reads it again on shutdown.
+    ImGui::GetIO().IniFilename = imgui_ini_path.c_str();
     ImGui::StyleColorsDark();
     ImGui_ImplSDL3_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer3_Init(renderer);
@@ -500,21 +570,62 @@ int main(int argc, char* argv[]) {
                 }
 
                 if (ImGui::BeginTabItem("Display")) {
+                    const bool using_scale =
+                        !(config.window_width > 0 && config.window_height > 0);
+
                     ImGui::Text("Window size:");
                     static const int scales[] = { 1, 2, 3, 4 };
                     for (int s : scales) {
                         char label[8];
                         std::snprintf(label, sizeof(label), "%dx", s);
+                        bool active = using_scale && config.window_scale == s;
+                        if (active) ImGui::PushStyleColor(ImGuiCol_Button,
+                            ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
                         if (ImGui::Button(label)) {
                             config.window_scale = s;
-                            if (!is_fullscreen) {
+                            config.window_width = 0;
+                            config.window_height = 0;
+                            if (!is_fullscreen)
                                 FitWindowToDisplay(window, NES_WIDTH * s, NES_HEIGHT * s);
-                            }
                             config.Save(CONFIG_PATH);
                         }
+                        if (active) ImGui::PopStyleColor();
                         ImGui::SameLine();
                     }
                     ImGui::NewLine();
+
+                    ImGui::Spacing();
+                    ImGui::Text("Resolution:");
+
+                    SDL_DisplayID disp = SDL_GetDisplayForWindow(window);
+                    if (!disp) disp = SDL_GetPrimaryDisplay();
+                    std::vector<Resolution> resolutions = CommonResolutionsForDisplay(disp);
+
+                    char preview[32];
+                    if (using_scale)
+                        std::snprintf(preview, sizeof(preview), "Match window size (%dx)",
+                                      config.window_scale);
+                    else
+                        std::snprintf(preview, sizeof(preview), "%d x %d",
+                                      config.window_width, config.window_height);
+
+                    ImGui::SetNextItemWidth(220);
+                    if (ImGui::BeginCombo("##resolution", preview)) {
+                        for (const Resolution& r : resolutions) {
+                            char item[32];
+                            std::snprintf(item, sizeof(item), "%d x %d", r.w, r.h);
+                            bool selected = !using_scale &&
+                                config.window_width == r.w && config.window_height == r.h;
+                            if (ImGui::Selectable(item, selected)) {
+                                config.window_width = r.w;
+                                config.window_height = r.h;
+                                if (!is_fullscreen)
+                                    FitWindowToDisplay(window, r.w, r.h);
+                                config.Save(CONFIG_PATH);
+                            }
+                        }
+                        ImGui::EndCombo();
+                    }
                     ImGui::EndTabItem();
                 }
 
@@ -532,6 +643,7 @@ int main(int argc, char* argv[]) {
                     ImGui::Text("Output level");
                     ImGui::ProgressBar(audio_level, ImVec2(-FLT_MIN, 0), "");
 
+                    ImGui::Text("\n");
                     ImGui::Separator();
 
                     // Re-enumerate while this tab is visible so devices that
@@ -564,7 +676,7 @@ int main(int argc, char* argv[]) {
                 }
 
                 if (ImGui::BeginTabItem("Controls")) {
-                    ImGui::TextDisabled("Click a box to rebind it; middle-click to unbind it.");
+                    ImGui::TextDisabled("Middle-click to unbind");
                     ImGui::Spacing();
                     ImGui::Text("Controller 1");
                     for (int i = 0; i < 8; i++) {
@@ -619,7 +731,7 @@ int main(int argc, char* argv[]) {
                 }
 
                 if (ImGui::BeginTabItem("Hotkeys")) {
-                    ImGui::TextDisabled("Click a box to rebind it; middle-click to unbind it.");
+                    ImGui::TextDisabled("Middle-click to unbind");
                     ImGui::Spacing();
 
                     auto hotkey_row = [&](const char* label, SDL_Scancode* target) {
@@ -649,10 +761,7 @@ int main(int argc, char* argv[]) {
                 if (ImGui::BeginTabItem("Savestates")) {
                     if (!cart) {
                         ImGui::TextWrapped(
-                            "Load a game to save or load its states.\n\n"
-                            "Savestates are written next to the ROM with a \".state\" "
-                            "extension and can only be loaded back into the exact game "
-                            "they were created from.");
+                            "Load a game to save or load its states");
                     } else {
                         ImGui::Text("Game: %s",
                                     fs::path(current_rom_path).stem().string().c_str());

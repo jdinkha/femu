@@ -40,6 +40,8 @@ AppConfig AppConfig::Load(const std::string& path) {
         else if (key == "hotkey_load_state") cfg.hotkeys.load_state = (SDL_Scancode)std::stoi(value);
         // Misc
         else if (key == "window_scale") cfg.window_scale = std::stoi(value);
+        else if (key == "window_width") cfg.window_width = std::stoi(value);
+        else if (key == "window_height") cfg.window_height = std::stoi(value);
         else if (key == "last_rom_dir") cfg.last_rom_dir = value;
         // Audio
         else if (key == "master_volume") cfg.master_volume = std::stof(value);
@@ -76,6 +78,8 @@ void AppConfig::Save(const std::string& path) const {
     f << "hotkey_load_state=" << (int)hotkeys.load_state << "\n";
 
     f << "window_scale=" << window_scale << "\n";
+    f << "window_width=" << window_width << "\n";
+    f << "window_height=" << window_height << "\n";
     f << "last_rom_dir=" << last_rom_dir << "\n";
 
     f << "master_volume=" << master_volume << "\n";

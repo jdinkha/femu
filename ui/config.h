@@ -31,7 +31,14 @@ struct AppConfig {
     bool controller2_enabled = false;
     HotkeyBindings hotkeys;
 
+    // Windowed size. window_scale drives the 1x-4x buttons. window_width /
+    // window_height, when both > 0, are an explicit pixel size chosen from the
+    // resolution dropdown and take precedence over the scale; the scale
+    // buttons clear them back to 0.
     int window_scale = 3;
+    int window_width = 0;
+    int window_height = 0;
+
     std::string last_rom_dir = "roms";
 
     // Audio. master_volume is a linear 0..1 gain applied to the SDL audio

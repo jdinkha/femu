@@ -530,25 +530,36 @@ int main(int argc, char* argv[]) {
 
             if (ImGui::BeginTabBar("MainTabs")) {
                 if (ImGui::BeginTabItem("Games")) {
+                    // SDL's dialog default_location wants NULL for "no
+                    // preference", not an empty string, so only pass the
+                    // stored directory through once one's actually been chosen.
+                    const char* start_dir = config.last_rom_dir.empty()
+                        ? nullptr : config.last_rom_dir.c_str();
+
                     if (ImGui::Button("Browse for ROM...")) {
                         static const SDL_DialogFileFilter filters[] = { { "NES ROMs", "nes" } };
                         SDL_ShowOpenFileDialog(OnRomFileChosen, &dialog_ctx, window,
-                                                filters, 1, config.last_rom_dir.c_str(), false);
+                                                filters, 1, start_dir, false);
                     }
                     ImGui::SameLine();
                     if (ImGui::Button("Choose ROMs Folder...")) {
                         SDL_ShowOpenFolderDialog(OnRomFolderChosen, &dialog_ctx, window,
-                                                  config.last_rom_dir.c_str(), false);
+                                                  start_dir, false);
                     }
 
-                    ImGui::Text("ROM folder: %s", config.last_rom_dir.c_str());
-                    ImGui::SameLine();
-                    if (ImGui::Button("Refresh")) {
-                        RefreshRomList(rom_files, config.last_rom_dir);
+                    if (config.last_rom_dir.empty()) {
+                        ImGui::TextDisabled(
+                            "No ROM folder selected yet - use \"Choose ROMs Folder...\" above.");
+                    } else {
+                        ImGui::Text("ROM folder: %s", config.last_rom_dir.c_str());
+                        ImGui::SameLine();
+                        if (ImGui::Button("Refresh")) {
+                            RefreshRomList(rom_files, config.last_rom_dir);
+                        }
                     }
                     ImGui::Separator();
 
-                    if (rom_files.empty()) {
+                    if (!config.last_rom_dir.empty() && rom_files.empty()) {
                         ImGui::TextDisabled("No .nes files found in this folder.");
                     }
                     for (auto& path : rom_files) {

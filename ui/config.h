@@ -39,7 +39,11 @@ struct AppConfig {
     int window_width = 0;
     int window_height = 0;
 
-    std::string last_rom_dir = "roms";
+    // Empty means the user hasn't picked a ROM folder yet (e.g. a fresh
+    // install) - the Games tab shows a prompt instead of a folder path in
+    // that case, rather than silently pointing at a "roms" directory that
+    // doesn't exist.
+    std::string last_rom_dir = "";
 
     // Audio. master_volume is a linear 0..1 gain applied to the SDL audio
     // stream. audio_device is the SDL playback device *name* (not ID, which

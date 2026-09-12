@@ -58,6 +58,14 @@ private:
     uint8_t controller_state[2] = { 0x00, 0x00 };
 
     double audio_time_accumulator = 0.0;
+
+    // Boxcar (moving-average) accumulator for the CPU-rate -> 44.1kHz audio
+    // downsample: every raw APU sample since the last output sample is summed
+    // here, and clock() emits their average instead of just the most recent
+    // one. See the long comment at the accumulation site in bus.cpp for why.
+    double audio_boxcar_sum = 0.0;
+    uint32_t audio_boxcar_count = 0;
+
     static constexpr double CPU_CLOCK_HZ = 1789773.0; // NTSC
     static constexpr double AUDIO_SAMPLE_RATE = 44100.0;
 };

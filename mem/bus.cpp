@@ -36,6 +36,8 @@ void Bus::SerializeState(StateWriter& w) const {
     w.write(controller[0]);
     w.write(controller[1]);
     w.write(audio_time_accumulator);
+    w.write(audio_boxcar_sum);
+    w.write(audio_boxcar_count);
 
     cpu.SerializeState(w);
     ppu.SerializeState(w);
@@ -51,6 +53,8 @@ void Bus::DeserializeState(StateReader& r) {
     r.read(controller[0]);
     r.read(controller[1]);
     r.read(audio_time_accumulator);
+    r.read(audio_boxcar_sum);
+    r.read(audio_boxcar_count);
 
     cpu.DeserializeState(r);
     ppu.DeserializeState(r);
@@ -66,14 +70,28 @@ void Bus::clock() {
         cpu.clock();
         apu.clock(); // APU's internal timers are already specified in CPU cycles
 
-        // Downsample the APU's per-CPU-cycle output to ~44.1kHz. Simple
-        // sample-and-hold decimation rather than a proper resampling
-        // filter - fine for a first pass, can introduce mild aliasing on
-        // very high-pitched sound effects.
+        // Downsample the APU's per-CPU-cycle output to ~44.1kHz with a boxcar
+        // (moving-average) low-pass filter: every raw sample is folded into a
+        // running sum, and once enough CPU time has passed for one output
+        // sample, we emit the *average* of everything accumulated since the
+        // last one - not just whichever raw sample happened to land on the
+        // boundary. Plain sample-and-hold decimation (picking one raw sample
+        // out of every ~40 and discarding the rest) throws away all the
+        // in-between high-frequency content instead of filtering it, and that
+        // discarded energy aliases back down into the audible range as clicks
+        // and pops - every channel can step to a new output level on every
+        // single CPU cycle, and real hardware's output stage naturally
+        // integrates that before it ever reaches a speaker. Averaging the
+        // whole window is a cheap approximation of that same filtering.
+        audio_boxcar_sum += apu.GetOutputSample();
+        audio_boxcar_count++;
+
         audio_time_accumulator += 1.0 / CPU_CLOCK_HZ;
         if (audio_time_accumulator >= 1.0 / AUDIO_SAMPLE_RATE) {
             audio_time_accumulator -= 1.0 / AUDIO_SAMPLE_RATE;
-            audio_samples.push_back((float)apu.GetOutputSample());
+            audio_samples.push_back((float)(audio_boxcar_sum / audio_boxcar_count));
+            audio_boxcar_sum = 0.0;
+            audio_boxcar_count = 0;
         }
     }
 

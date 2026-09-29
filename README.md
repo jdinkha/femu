@@ -1,5 +1,5 @@
 # femu
-An NES emulator written from scratch in C++17
+An NES emulator written from scratch in C++17, by Jacob Dinkha and Frank Zombre
 
 ## Prerequisites
 

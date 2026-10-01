@@ -56,6 +56,7 @@
 #include "mapper184.h"
 #include "mapper189.h"
 #include "mapper193.h"
+#include "mapper206.h"
 
 std::unique_ptr<Mapper> CreateMapper(RomInfo& info) {
     const uint8_t prg = info.prgBanks, chr = info.chrBanks, sub = info.submapper;
@@ -99,6 +100,7 @@ std::unique_ptr<Mapper> CreateMapper(RomInfo& info) {
         case 72:  return std::make_unique<Mapper_072>(prg, chr, 72);
         case 73:  return std::make_unique<Mapper_073>(prg, chr);
         case 75:  return std::make_unique<Mapper_075>(prg, chr);
+        case 76:  return std::make_unique<Mapper_206>(prg, chr, 76, sub);
         case 77:  return std::make_unique<Mapper_077>(prg, chr);
         case 78: {
             bool holy_diver = sub == 3 || (sub != 1 && info.four_screen);
@@ -111,10 +113,12 @@ std::unique_ptr<Mapper> CreateMapper(RomInfo& info) {
         case 85:  return std::make_unique<Mapper_085>(prg, chr, sub);
         case 86:  return std::make_unique<Mapper_086>(prg, chr);
         case 87:  return std::make_unique<Mapper_087>(prg, chr);
+        case 88:  return std::make_unique<Mapper_206>(prg, chr, 88, sub);
         case 89:  return std::make_unique<Mapper_089>(prg, chr);
         case 92:  return std::make_unique<Mapper_072>(prg, chr, 92);
         case 93:  return std::make_unique<Mapper_093>(prg, chr);
         case 94:  return std::make_unique<Mapper_094>(prg, chr);
+        case 95:  return std::make_unique<Mapper_206>(prg, chr, 95, sub);
         case 96:  return std::make_unique<Mapper_096>(prg, chr);
         case 97:  return std::make_unique<Mapper_097>(prg, chr);
         case 105: return std::make_unique<Mapper_105>(prg, chr);
@@ -125,6 +129,7 @@ std::unique_ptr<Mapper> CreateMapper(RomInfo& info) {
         case 144: return std::make_unique<Mapper_144>(prg, chr);
         case 146: return std::make_unique<Mapper_079>(prg, chr);
         case 152: return std::make_unique<Mapper_070>(prg, chr, 152);
+        case 154: return std::make_unique<Mapper_206>(prg, chr, 154, sub);
         case 158: return std::make_unique<Mapper_064>(prg, chr, 158);
         case 159: return std::make_unique<Mapper_016>(prg, chr, 159, sub, info.battery);
         case 168: return std::make_unique<Mapper_168>(prg, chr);
@@ -133,6 +138,7 @@ std::unique_ptr<Mapper> CreateMapper(RomInfo& info) {
         case 185: return std::make_unique<Mapper_003>(prg, chr, 185, sub);
         case 189: return std::make_unique<Mapper_189>(prg, chr);
         case 193: return std::make_unique<Mapper_193>(prg, chr);
+        case 206: return std::make_unique<Mapper_206>(prg, chr, 206, sub);
         case 207: return std::make_unique<Mapper_080>(prg, chr, 207);
         default:  return nullptr;
     }

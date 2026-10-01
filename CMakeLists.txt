@@ -25,6 +25,7 @@ target_link_libraries(imgui PUBLIC SDL3::SDL3)
 add_executable(femu
     main.cpp
     ui/config.cpp
+    ui/fps_test.cpp
     cpu/cpu.cpp
     mem/bus.cpp
     mem/savestate.cpp

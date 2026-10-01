@@ -4,6 +4,7 @@
 #include <imgui_impl_sdlrenderer3.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <cfloat>
 #include <cmath>
 #include <ctime>
@@ -16,6 +17,7 @@
 #include "mem/bus.h"
 #include "mem/savestate.h"
 #include "ui/config.h"
+#include "ui/fps_test.h"
 
 namespace fs = std::filesystem;
 
@@ -303,6 +305,30 @@ static void SDLCALL OnRomFolderChosen(void* userdata, const char* const* filelis
 }
 
 int main(int argc, char* argv[]) {
+    // `femu [rom]` launches straight into a ROM. `femu --fps-test [seconds]
+    // <rom>` does the same, but times every frame while you play and, after
+    // `seconds` (default 60) or when the window is closed, prints a report
+    // vs a real NES and exits - 0 if it passed, 1 if not. See ui/fps_test.h.
+    const char* rom_arg = nullptr;
+    std::unique_ptr<FpsTest> fps_test;
+    for (int i = 1; i < argc; i++) {
+        if (std::string(argv[i]) == "--fps-test") {
+            double seconds = 60.0;
+            if (i + 1 < argc) {
+                char* end = nullptr;
+                double v = std::strtod(argv[i + 1], &end);
+                if (*end == '\0' && v > 0.0) { seconds = v; i++; }
+            }
+            fps_test = std::make_unique<FpsTest>(seconds);
+        } else {
+            rom_arg = argv[i];
+        }
+    }
+    if (fps_test && !rom_arg) {
+        std::fprintf(stderr, "Usage: %s --fps-test [seconds] <rom.nes>\n", argv[0]);
+        return 1;
+    }
+
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
@@ -436,18 +462,18 @@ int main(int argc, char* argv[]) {
     };
 
     // Optional: still support launching straight into a ROM via argv.
-    if (argc >= 2) {
-        auto initial = std::make_shared<Cartridge>(argv[1]);
+    if (rom_arg) {
+        auto initial = std::make_shared<Cartridge>(rom_arg);
         if (initial->imageValid()) {
             cart = initial;
             bus.insertCartridge(cart);
             bus.reset();
             state = AppState::RUNNING;
-            current_rom_path = argv[1];
+            current_rom_path = rom_arg;
             UpdateWindowTitle(window, current_rom_path);
             overlay_hint_timer = OVERLAY_HINT_SECONDS;
         } else {
-            std::fprintf(stderr, "Failed to load ROM from argv, opening menu instead: %s\n", argv[1]);
+            std::fprintf(stderr, "Failed to load ROM from argv, opening menu instead: %s\n", rom_arg);
         }
     }
 
@@ -465,9 +491,27 @@ int main(int argc, char* argv[]) {
     Uint64 frame_start = SDL_GetPerformanceCounter();
 
     bool running = true;
+    int exit_code = 0;
     SDL_Event event;
 
+    if (fps_test) {
+        if (state == AppState::RUNNING) {
+            std::printf("FPS test: timing %s for %.0f s (plus 1 s warm-up)...\n",
+                        current_rom_path.c_str(), fps_test->Duration());
+            std::fflush(stdout);
+        } else {
+            std::fprintf(stderr, "FPS test: the ROM didn't load, so there's nothing to measure.\n");
+            running = false;
+            exit_code = 1;
+        }
+    }
+
     while (running) {
+        // Filled in when this iteration emulates a frame, for --fps-test.
+        bool emulated_frame = false;
+        double emu_seconds = 0.0;
+        uint32_t frame_dots = 0;
+
         while (SDL_PollEvent(&event)) {
             ImGui_ImplSDL3_ProcessEvent(&event);
 
@@ -841,10 +885,14 @@ int main(int argc, char* argv[]) {
             bus.controller[1] = config.controller2_enabled
                 ? ReadController(keys, config.keys2, dpad2) : 0x00;
 
+            const Uint64 emu_start = SDL_GetPerformanceCounter();
             do {
                 bus.clock();
+                frame_dots++;
             } while (!bus.ppu.frame_complete);
             bus.ppu.frame_complete = false;
+            emu_seconds = (double)(SDL_GetPerformanceCounter() - emu_start) / (double)perf_freq;
+            emulated_frame = true;
 
             if (!bus.audio_samples.empty()) {
                 // APU output is unipolar ~0..0.75; scale the peak up so a
@@ -899,6 +947,7 @@ int main(int argc, char* argv[]) {
         // CPU core at 100% redrawing as fast as possible.
         Uint64 now = SDL_GetPerformanceCounter();
         double elapsed = (double)(now - frame_start) / (double)perf_freq;
+        const double work_seconds = elapsed;
         double remaining = TARGET_FRAME_SECONDS - elapsed;
         if (remaining > 0.0) {
             if (remaining > 0.002) {
@@ -909,8 +958,17 @@ int main(int argc, char* argv[]) {
                 elapsed = (double)(now - frame_start) / (double)perf_freq;
             } while (elapsed < TARGET_FRAME_SECONDS);
         }
-        frame_start = SDL_GetPerformanceCounter();
+        const Uint64 next_frame_start = SDL_GetPerformanceCounter();
+        if (fps_test && emulated_frame) {
+            fps_test->AddFrame((double)(next_frame_start - frame_start) / (double)perf_freq,
+                               work_seconds, emu_seconds, frame_dots);
+            if (fps_test->Done()) running = false;
+        }
+        frame_start = next_frame_start;
     }
+
+    if (fps_test && exit_code == 0)
+        exit_code = fps_test->Report(current_rom_path) ? 0 : 1;
 
     config.Save(CONFIG_PATH);
 
@@ -923,5 +981,5 @@ int main(int argc, char* argv[]) {
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
-    return 0;
+    return exit_code;
 }

@@ -51,5 +51,13 @@ Visual Studio's generator is multi-config, so `--config Release` is required at 
 ./femu path/to/game.nes # launches straight into that ROM
 ```
 
+### FPS test
+
+```bash
+./femu --fps-test [seconds] path/to/game.nes
+```
+
+Runs the game normally (you can play it) while timing every frame, then after `seconds` (default 60), or when you close the window, prints a report and exits with 0 on pass and 1 on fail. The report covers average fps against a real NTSC NES (60.0988 fps), 1% and 0.1% low fps, slow frames, how much of each frame's 16.6 ms budget went to emulation and rendering, and the slowest frames with their likely cause. It passes if the average is within 0.1% of a real NES and the 1% low is at least 95% of it. Use a Release build, or the numbers mean little.
+
 On first run, use the **Games** tab to either browse for a single `.nes` file or point at a folder to list all ROMs in it.
 

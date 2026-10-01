@@ -50,6 +50,7 @@ struct StateReader {
     }
 
     void readBytes(void* dst, size_t n) {
+        if (n == 0) return; // also keeps memcpy away from an empty vector's null data()
         if (!ok || cur + n > end) { ok = false; return; }
         std::memcpy(dst, cur, n);
         cur += n;

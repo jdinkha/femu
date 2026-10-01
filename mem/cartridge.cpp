@@ -1,7 +1,5 @@
 #include "cartridge.h"
-#include "mapper000.h"
-#include "mapper001.h"
-#include "mapper004.h"
+#include "mapper_factory.h"
 #include "serialize.h"
 #include <fstream>
 #include <filesystem>
@@ -30,7 +28,14 @@ Cartridge::Cartridge(const std::string& path) {
         ifs.seekg(512, std::ios::cur);
     }
 
-    mapperID = (uint8_t)(((header.mapper2 >> 4) << 4) | (header.mapper1 >> 4));
+    // Old dumping tools left junk like "DiskDude!" in bytes 7-15 of iNES 1.0
+    // headers, which would corrupt the mapper number's high nibble. A clean
+    // iNES 1.0 header has bytes 12-15 zeroed (NES 2.0 uses them, so it's
+    // exempt); when they aren't, trust only the low nibble.
+    const bool nes2 = (header.mapper2 & 0x0C) == 0x08;
+    const bool junk = !nes2 && (header.unused[1] | header.unused[2] | header.unused[3] | header.unused[4]) != 0;
+    mapperID = (uint8_t)((junk ? 0 : (header.mapper2 >> 4) << 4) | (header.mapper1 >> 4));
+    if (nes2 && (header.prg_ram_size & 0x0F)) return; // NES 2.0 mapper number above 255
     hw_mirror = (header.mapper1 & 0x01) ? Mirror::VERTICAL : Mirror::HORIZONTAL;
     battery_backed = (header.mapper1 & 0x02) != 0;
 
@@ -39,30 +44,43 @@ Cartridge::Cartridge(const std::string& path) {
     ifs.read((char*)prgMemory.data(), (std::streamsize)prgMemory.size());
 
     nCHRBanks = header.chr_chunks;
-    chrMemory.resize((size_t)(nCHRBanks == 0 ? 1 : nCHRBanks) * 8192); // banks==0 means CHR-RAM
+    chrMemory.resize((size_t)nCHRBanks * 8192);
     if (nCHRBanks > 0)
         ifs.read((char*)chrMemory.data(), (std::streamsize)chrMemory.size());
 
     if (!ifs.good() && !ifs.eof()) return; // read failure partway through
+    if (prgMemory.empty()) return;
 
-    switch (mapperID) {
-        case 0:
-            mapper = std::make_unique<Mapper_000>(nPRGBanks, nCHRBanks);
-            break;
-        case 1:
-            mapper = std::make_unique<Mapper_001>(nPRGBanks, nCHRBanks);
-            break;
-        case 4:
-            mapper = std::make_unique<Mapper_004>(nPRGBanks, nCHRBanks);
-            break;
-        default:
-            return; // unsupported mapper - add more Mapper_XXX classes as needed
+    RomInfo info;
+    info.mapper = mapperID;
+    info.submapper = nes2 ? (uint8_t)(header.prg_ram_size >> 4) : 0; // NES 2.0 byte 8
+    info.prgBanks = nPRGBanks;
+    info.chrBanks = nCHRBanks;
+    info.four_screen = (header.mapper1 & 0x08) != 0;
+    info.battery = battery_backed;
+    mapper = CreateMapper(info);
+    if (!mapper) return; // unsupported mapper - see mapper_factory.cpp
+    if (info.four_screen) four_screen_vram.resize(0x1000, 0x00); // board supplies all 4 nametables
+    if (nes2) {
+        // Bytes 10/11: PRG-RAM and CHR-RAM as shift counts (64 << n bytes,
+        // 0 = none), volatile in the low nibble and battery-backed in the high.
+        auto size = [](uint8_t shift) { return shift ? 64u << shift : 0u; };
+        const uint8_t prg_ram_byte = header.tv_system2, chr_ram_byte = (uint8_t)header.unused[0];
+        mapper->SetRamSizes(size(prg_ram_byte & 0x0F) + size(prg_ram_byte >> 4),
+                            size(chr_ram_byte & 0x0F) + size(chr_ram_byte >> 4));
     }
+
+    // CHR-RAM sits after any CHR-ROM (see Mapper::ppuMapRead). The board
+    // decides how much; with neither ROM nor RAM, fall back to 8KB of RAM.
+    chr_rom_size = chrMemory.size();
+    chrMemory.resize(chr_rom_size + mapper->ChrRamSize(), 0x00);
+    if (chrMemory.empty()) chrMemory.resize(8192, 0x00);
 
     // PRG-RAM is always allocated (some mappers use $6000-$7FFF as plain
     // work RAM even without a battery); only persisted to disk if the
     // header says this cartridge actually has a battery backing it.
-    prg_ram.resize(8192, 0x00);
+    prg_ram.resize(mapper->PrgRamSize(), 0x00);
+    mapper->AttachMemory(&prgMemory, &prg_ram);
     if (battery_backed) {
         sav_path = std::filesystem::path(path).replace_extension(".sav").string();
         std::ifstream sav(sav_path, std::ios::binary);
@@ -90,15 +108,16 @@ Cartridge::Cartridge(const std::string& path) {
 
 void Cartridge::SerializeState(StateWriter& w) const {
     w.writeBytes(prg_ram.data(), prg_ram.size());
-    if (nCHRBanks == 0) // CHR-RAM: mutable, must be saved (CHR-ROM never changes)
-        w.writeBytes(chrMemory.data(), chrMemory.size());
+    // CHR-RAM: mutable, must be saved (CHR-ROM never changes)
+    w.writeBytes(chrMemory.data() + chr_rom_size, chrMemory.size() - chr_rom_size);
+    w.writeBytes(four_screen_vram.data(), four_screen_vram.size());
     if (mapper) mapper->SerializeState(w);
 }
 
 void Cartridge::DeserializeState(StateReader& r) {
     r.readBytes(prg_ram.data(), prg_ram.size());
-    if (nCHRBanks == 0)
-        r.readBytes(chrMemory.data(), chrMemory.size());
+    r.readBytes(chrMemory.data() + chr_rom_size, chrMemory.size() - chr_rom_size);
+    r.readBytes(four_screen_vram.data(), four_screen_vram.size());
     if (mapper) mapper->DeserializeState(r);
 }
 
@@ -119,14 +138,16 @@ Mirror Cartridge::mirror() const {
 }
 
 bool Cartridge::cpuRead(uint16_t addr, uint8_t& data) {
-    if (addr >= 0x6000 && addr <= 0x7FFF && !prg_ram.empty()) {
-        if (mapper && !mapper->prgRamEnabled()) { data = 0x00; return true; }
-        data = prg_ram[addr - 0x6000];
+    if (!mapper) return false;
+    if (mapper->cpuReadHook(addr, data)) return true;
+
+    uint32_t mapped_addr = 0;
+    if (addr >= 0x4020 && !prg_ram.empty() && mapper->prgRamMap(addr, mapped_addr)) {
+        data = mapper->prgRamEnabled() ? prg_ram[mapped_addr % prg_ram.size()] : 0x00;
         return true;
     }
 
-    uint32_t mapped_addr = 0;
-    if (mapper && mapper->cpuMapRead(addr, mapped_addr)) {
+    if (mapper->cpuMapRead(addr, mapped_addr)) {
         data = prgMemory[mapped_addr % prgMemory.size()];
         return true;
     }
@@ -134,14 +155,17 @@ bool Cartridge::cpuRead(uint16_t addr, uint8_t& data) {
 }
 
 bool Cartridge::cpuWrite(uint16_t addr, uint8_t data) {
-    if (addr >= 0x6000 && addr <= 0x7FFF && !prg_ram.empty()) {
-        if (mapper && !mapper->prgRamEnabled()) return true; // claimed, but ignored while disabled
-        prg_ram[addr - 0x6000] = data;
+    if (!mapper) return false;
+    if (mapper->cpuWriteHook(addr, data)) return true;
+
+    uint32_t mapped_addr = 0;
+    if (addr >= 0x4020 && !prg_ram.empty() && mapper->prgRamMap(addr, mapped_addr)) {
+        // claimed even while disabled - the write is just ignored
+        if (mapper->prgRamEnabled()) prg_ram[mapped_addr % prg_ram.size()] = data;
         return true;
     }
 
-    uint32_t mapped_addr = 0;
-    if (mapper && mapper->cpuMapWrite(addr, mapped_addr, data)) {
+    if (mapper->cpuMapWrite(addr, mapped_addr, data)) {
         // Bank-switching mappers (MMC1/MMC3) fully handle the write
         // themselves via mapped_addr/data inside cpuMapWrite; PRG-ROM itself
         // is physically read-only so there's nothing further to do here.
@@ -151,8 +175,14 @@ bool Cartridge::cpuWrite(uint16_t addr, uint8_t data) {
 }
 
 bool Cartridge::ppuRead(uint16_t addr, uint8_t& data) {
+    if (!mapper) return false;
+    if (mapper->ppuReadHook(addr, data)) return true;
+    if (addr >= 0x2000 && addr <= 0x3EFF && !four_screen_vram.empty()) {
+        data = four_screen_vram[addr & 0x0FFF];
+        return true;
+    }
     uint32_t mapped_addr = 0;
-    if (mapper && mapper->ppuMapRead(addr, mapped_addr)) {
+    if (mapper->ppuMapRead(addr, mapped_addr)) {
         data = chrMemory[mapped_addr % chrMemory.size()];
         return true;
     }
@@ -160,10 +190,30 @@ bool Cartridge::ppuRead(uint16_t addr, uint8_t& data) {
 }
 
 bool Cartridge::ppuWrite(uint16_t addr, uint8_t data) {
+    if (!mapper) return false;
+    if (mapper->ppuWriteHook(addr, data)) return true;
+    if (addr >= 0x2000 && addr <= 0x3EFF && !four_screen_vram.empty()) {
+        four_screen_vram[addr & 0x0FFF] = data;
+        return true;
+    }
     uint32_t mapped_addr = 0;
-    if (mapper && mapper->ppuMapWrite(addr, mapped_addr)) {
+    if (mapper->ppuMapWrite(addr, mapped_addr)) {
         chrMemory[mapped_addr % chrMemory.size()] = data;
         return true;
     }
     return false;
+}
+
+uint8_t Cartridge::NametablePage(uint8_t quadrant) const {
+    if (mapper) {
+        int page = mapper->nametablePage(quadrant);
+        if (page >= 0) return (uint8_t)(page & 1);
+    }
+    switch (mirror()) {
+        case Mirror::VERTICAL:     return quadrant & 1;
+        case Mirror::HORIZONTAL:   return (quadrant >> 1) & 1;
+        case Mirror::ONESCREEN_HI: return 1;
+        case Mirror::ONESCREEN_LO:
+        default:                   return 0;
+    }
 }

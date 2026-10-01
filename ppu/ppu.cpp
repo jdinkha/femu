@@ -128,17 +128,7 @@ uint8_t PPU::ppuRead(uint16_t addr) {
         return 0x00; // no cartridge / no CHR data available
     } else if (addr <= 0x3EFF) {
         addr &= 0x0FFF;
-        static const uint8_t vertical_map[4]   = {0, 1, 0, 1};
-        static const uint8_t horizontal_map[4] = {0, 0, 1, 1};
-        uint8_t quadrant = (uint8_t)(addr / 0x0400);
-        uint8_t table;
-        switch (cart->mirror()) {
-            case Mirror::VERTICAL:      table = vertical_map[quadrant]; break;
-            case Mirror::HORIZONTAL:    table = horizontal_map[quadrant]; break;
-            case Mirror::ONESCREEN_HI:  table = 1; break;
-            case Mirror::ONESCREEN_LO:
-            default:                    table = 0; break;
-        }
+        uint8_t table = cart ? cart->NametablePage((uint8_t)(addr / 0x0400)) : 0;
         data = nameTable[table][addr & 0x03FF];
     } else { // addr <= 0x3FFF
         addr &= 0x001F;
@@ -160,17 +150,7 @@ void PPU::ppuWrite(uint16_t addr, uint8_t data) {
         // CHR-ROM: nothing to do (cart->ppuWrite already handled the CHR-RAM case above)
     } else if (addr <= 0x3EFF) {
         addr &= 0x0FFF;
-        static const uint8_t vertical_map[4]   = {0, 1, 0, 1};
-        static const uint8_t horizontal_map[4] = {0, 0, 1, 1};
-        uint8_t quadrant = (uint8_t)(addr / 0x0400);
-        uint8_t table;
-        switch (cart->mirror()) {
-            case Mirror::VERTICAL:      table = vertical_map[quadrant]; break;
-            case Mirror::HORIZONTAL:    table = horizontal_map[quadrant]; break;
-            case Mirror::ONESCREEN_HI:  table = 1; break;
-            case Mirror::ONESCREEN_LO:
-            default:                    table = 0; break;
-        }
+        uint8_t table = cart ? cart->NametablePage((uint8_t)(addr / 0x0400)) : 0;
         nameTable[table][addr & 0x03FF] = data;
     } else { // addr <= 0x3FFF
         addr &= 0x001F;
@@ -424,6 +404,8 @@ void PPU::LoadSpriteShifters() {
 void PPU::clock() {
     bool renderLine = (scanline >= -1 && scanline < 240);
 
+    if (cycle == 4 && cart) cart->PpuScanline(scanline, mask.render_background || mask.render_sprites);
+
     if (scanline == -1 && cycle == 1) {
         status.vertical_blank = 0;
         status.sprite_zero_hit = 0;
@@ -490,7 +472,9 @@ void PPU::clock() {
             EvaluateSpritesForScanline();
         }
         if (cycle == 340) {
+            if (cart) cart->PpuSpriteFetch(true);
             LoadSpriteShifters();
+            if (cart) cart->PpuSpriteFetch(false);
         }
 
         // MMC3's scanline-counting IRQ: real hardware counts PPT-address-bus

@@ -69,6 +69,7 @@ void Bus::clock() {
     if (system_clock_counter % 3 == 0) {
         cpu.clock();
         apu.clock(); // APU's internal timers are already specified in CPU cycles
+        if (cartridge) cartridge->CpuClock(); // mapper IRQ counters and expansion audio
 
         // Downsample the APU's per-CPU-cycle output to ~44.1kHz with a boxcar
         // (moving-average) low-pass filter: every raw sample is folded into a
@@ -83,7 +84,7 @@ void Bus::clock() {
         // single CPU cycle, and real hardware's output stage naturally
         // integrates that before it ever reaches a speaker. Averaging the
         // whole window is a cheap approximation of that same filtering.
-        audio_boxcar_sum += apu.GetOutputSample();
+        audio_boxcar_sum += apu.GetOutputSample() + (cartridge ? cartridge->AudioSample() : 0.0f);
         audio_boxcar_count++;
 
         audio_time_accumulator += 1.0 / CPU_CLOCK_HZ;

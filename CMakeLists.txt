@@ -22,6 +22,10 @@ target_include_directories(imgui PUBLIC
 )
 target_link_libraries(imgui PUBLIC SDL3::SDL3)
 
+# Every mapper source (mem/mapperNNN.cpp, plus mapper_factory.cpp); mappers
+# small enough to live entirely in their header have no .cpp.
+file(GLOB MAPPER_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/mem/mapper*.cpp)
+
 add_executable(femu
     main.cpp
     ui/config.cpp
@@ -30,9 +34,8 @@ add_executable(femu
     mem/bus.cpp
     mem/savestate.cpp
     mem/cartridge.cpp
-    mem/mapper000.cpp
-    mem/mapper001.cpp
-    mem/mapper004.cpp
+    mem/banked_mapper.cpp
+    ${MAPPER_SOURCES}
     ppu/ppu.cpp
     apu/apu.cpp
 )

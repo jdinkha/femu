@@ -2,6 +2,7 @@
 #include "mapper000.h"
 #include "mapper001.h"
 #include "mapper002.h"
+#include "mapper003.h"
 #include "mapper004.h"
 
 std::unique_ptr<Mapper> CreateMapper(RomInfo& info) {
@@ -10,7 +11,9 @@ std::unique_ptr<Mapper> CreateMapper(RomInfo& info) {
         case 0:   return std::make_unique<Mapper_000>(prg, chr);
         case 1:   return std::make_unique<Mapper_001>(prg, chr);
         case 2:   return std::make_unique<Mapper_002>(prg, chr, sub);
+        case 3:   return std::make_unique<Mapper_003>(prg, chr, 3, sub);
         case 4:   return std::make_unique<Mapper_004>(prg, chr);
+        case 185: return std::make_unique<Mapper_003>(prg, chr, 185, sub);
         default:  return nullptr;
     }
 }

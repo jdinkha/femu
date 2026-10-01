@@ -35,6 +35,7 @@ add_executable(femu
     mem/savestate.cpp
     mem/cartridge.cpp
     mem/banked_mapper.cpp
+    mem/vrc7_audio.cpp
     ${MAPPER_SOURCES}
     ppu/ppu.cpp
     apu/apu.cpp

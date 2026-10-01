@@ -42,6 +42,12 @@ public:
     bool frame_complete = false;
     bool nmi = false; // Bus polls this every system clock and fires cpu.nmi() when set
 
+    // Current beam position, read-only. Scanline is -1 (pre-render) to 260;
+    // cycle is the dot the next clock() will render, 0-340. Used by the
+    // nestest harness to check CPU/PPU lockstep against nestest.log.
+    int16_t GetScanline() const { return scanline; }
+    int16_t GetCycle() const { return cycle; }
+
     // 256x240, 3 bytes/pixel (RGB), row-major - ready to hand straight to an
     // SDL streaming texture with SDL_PIXELFORMAT_RGB24.
     std::array<uint8_t, 256 * 240 * 3> framebuffer{};

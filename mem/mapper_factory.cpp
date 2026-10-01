@@ -55,6 +55,7 @@
 #include "mapper180.h"
 #include "mapper184.h"
 #include "mapper189.h"
+#include "mapper193.h"
 
 std::unique_ptr<Mapper> CreateMapper(RomInfo& info) {
     const uint8_t prg = info.prgBanks, chr = info.chrBanks, sub = info.submapper;
@@ -131,6 +132,7 @@ std::unique_ptr<Mapper> CreateMapper(RomInfo& info) {
         case 184: return std::make_unique<Mapper_184>(prg, chr);
         case 185: return std::make_unique<Mapper_003>(prg, chr, 185, sub);
         case 189: return std::make_unique<Mapper_189>(prg, chr);
+        case 193: return std::make_unique<Mapper_193>(prg, chr);
         case 207: return std::make_unique<Mapper_080>(prg, chr, 207);
         default:  return nullptr;
     }

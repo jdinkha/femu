@@ -100,14 +100,11 @@ void Bus::clock() {
         cpu.nmi();
     }
 
-    // Level-triggered, unlike NMI: safe to call every cycle while pending,
-    // since CPU::irq() itself no-ops once the I flag is set - it won't
-    // retrigger until the interrupt handler clears I again (and by then
-    // the game should have acknowledged the source via $4015).
-    if (apu.IRQPending()) {
-        cpu.irq();
-    }
-    if (cartridge && cartridge->irqState()) {
+    // Level-triggered, unlike NMI: the CPU samples /IRQ between
+    // instructions, and CPU::irq() itself no-ops while the I flag is set -
+    // it won't retrigger until the handler's RTI clears I again (and by
+    // then the game should have acknowledged the source).
+    if (cpu.complete() && (apu.IRQPending() || (cartridge && cartridge->irqState()))) {
         cpu.irq();
     }
 

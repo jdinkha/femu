@@ -225,15 +225,15 @@ uint8_t CPU::BPL() {
 
 uint8_t CPU::BRK() {
     PC++;
-    SetFlag(I, 1);
 
     cpuWrite(0x0100 + SP, (PC >> 8) & 0x00FF); SP--;
     cpuWrite(0x0100 + SP, PC & 0x00FF);        SP--;
 
     SetFlag(B, 1);
-    cpuWrite(0x0100 + SP, status);
+    cpuWrite(0x0100 + SP, status); // I as it was before the BRK
     SetFlag(B, 0);
     SP--;
+    SetFlag(I, 1);
 
     PC = (uint16_t)cpuRead(0xFFFE) | ((uint16_t)cpuRead(0xFFFF) << 8);
     return 0;
@@ -728,10 +728,12 @@ void CPU::irq() {
         cpuWrite(0x0100 + SP, (PC >> 8) & 0x00FF); SP--;
         cpuWrite(0x0100 + SP, PC & 0x00FF);        SP--;
 
+        // The pushed flags have B clear and keep the I flag as it was, so
+        // RTI re-enables IRQs; I is only set afterwards, for the handler.
         SetFlag(B, 0);
         SetFlag(U, 1);
-        SetFlag(I, 1);
         cpuWrite(0x0100 + SP, status); SP--;
+        SetFlag(I, 1);
 
         addr_abs = 0xFFFE;
         uint16_t lo = cpuRead(addr_abs);
@@ -748,8 +750,8 @@ void CPU::nmi() {
 
     SetFlag(B, 0);
     SetFlag(U, 1);
+    cpuWrite(0x0100 + SP, status); SP--; // pre-interrupt I flag, as in irq()
     SetFlag(I, 1);
-    cpuWrite(0x0100 + SP, status); SP--;
 
     addr_abs = 0xFFFA;
     uint16_t lo = cpuRead(addr_abs);

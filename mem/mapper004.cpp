@@ -57,8 +57,9 @@ uint32_t Mapper_004::PrgBank(uint8_t raw) const {
 }
 
 uint32_t Mapper_004::ChrBank(uint8_t raw) const {
-    uint32_t nCHR1k = (uint32_t)nCHRBanks * 8;
-    if (nCHR1k == 0) nCHR1k = 8; // CHR-RAM fallback; MMC3 games essentially always ship CHR-ROM
+    // The MMC3 banks CHR-RAM (TGROM/TNROM) exactly like CHR-ROM.
+    uint32_t nCHR1k = nCHRBanks ? (uint32_t)nCHRBanks * 8 : chr_ram_size / 0x400;
+    if (nCHR1k == 0) nCHR1k = 8;
     return (raw % nCHR1k) * 0x400;
 }
 
@@ -144,7 +145,6 @@ bool Mapper_004::cpuMapWrite(uint16_t addr, uint32_t& mapped_addr, uint8_t data)
 
 bool Mapper_004::ppuMapRead(uint16_t addr, uint32_t& mapped_addr) {
     if (addr > 0x1FFF) return false;
-    if (nCHRBanks == 0) { mapped_addr = addr; return true; } // CHR-RAM (uncommon for MMC3, but handled)
     uint8_t window = (uint8_t)(addr / 0x400); // 0-7
     mapped_addr = chr_offset[window] + (addr & 0x3FF);
     return true;
@@ -152,7 +152,6 @@ bool Mapper_004::ppuMapRead(uint16_t addr, uint32_t& mapped_addr) {
 
 bool Mapper_004::ppuMapWrite(uint16_t addr, uint32_t& mapped_addr) {
     if (addr > 0x1FFF) return false;
-    if (nCHRBanks == 0) { mapped_addr = addr; return true; } // CHR-RAM
     uint8_t window = (uint8_t)(addr / 0x400);
     if (!chr_writable[window]) return false; // real CHR-ROM, not writable
     mapped_addr = chr_offset[window] + (addr & 0x3FF);

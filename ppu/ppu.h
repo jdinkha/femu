@@ -10,9 +10,10 @@ struct StateReader;
 // 2C02 Picture Processing Unit.
 //
 // This first pass implements: register interface, VRAM/palette/OAM memory,
-// full scanline/cycle timing (262 x 341), NMI generation at vblank, and
-// background tile rendering (with scrolling - the loopy v/t/x registers
-// handle that "for free" since that's how real hardware does it too).
+// full scanline/cycle timing (262 x 341, with the NTSC odd-frame dot skip),
+// NMI generation at vblank, and background tile rendering (with scrolling -
+// the loopy v/t/x registers handle that "for free" since that's how real
+// hardware does it too).
 //
 // NOT yet implemented: sprite rendering (OAM evaluation, sprite shifters,
 // sprite-0 hit, OAMDMA at $4014). That's the natural next milestone -
@@ -137,6 +138,7 @@ private:
     // ---- Background rendering pipeline ----
     int16_t scanline = -1; // -1 = pre-render line
     int16_t cycle = 0;
+    bool odd_frame = false; // toggles every frame - see the dot skip in clock()
 
     uint8_t bg_next_tile_id = 0x00;
     uint8_t bg_next_tile_attrib = 0x00;

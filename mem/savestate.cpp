@@ -13,7 +13,7 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr char     MAGIC[8]  = { 'F', 'E', 'M', 'U', 'S', 'A', 'V', 'E' };
-constexpr uint32_t FORMAT_VERSION = 1;
+constexpr uint32_t FORMAT_VERSION = 2; // 2: PPU odd_frame flag
 
 // Fixed-size header prepended to every .state file. Kept 8-byte aligned so the
 // serialized payload that follows starts on a clean boundary.

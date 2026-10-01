@@ -31,6 +31,7 @@ void PPU::SerializeState(StateWriter& w) const {
 
     w.write(scanline);
     w.write(cycle);
+    w.write(odd_frame);
     w.write(bg_next_tile_id);
     w.write(bg_next_tile_attrib);
     w.write(bg_next_tile_lsb);
@@ -68,6 +69,7 @@ void PPU::DeserializeState(StateReader& r) {
 
     r.read(scanline);
     r.read(cycle);
+    r.read(odd_frame);
     r.read(bg_next_tile_id);
     r.read(bg_next_tile_attrib);
     r.read(bg_next_tile_lsb);
@@ -96,6 +98,7 @@ void PPU::reset() {
     ppu_data_buffer = 0x00;
     scanline = -1;
     cycle = 0;
+    odd_frame = false;
     bg_next_tile_id = 0x00;
     bg_next_tile_attrib = 0x00;
     bg_next_tile_lsb = 0x00;
@@ -582,6 +585,14 @@ void PPU::clock() {
         if (scanline >= 261) {
             scanline = -1;
             frame_complete = true;
+            odd_frame = !odd_frame;
+        } else if (scanline == 0 && odd_frame
+                   && (mask.render_background || mask.render_sprites)) {
+            // NTSC odd-frame skip: with rendering on, every other frame drops
+            // the idle dot (0,0) - hardware jumps from pre-render dot 339
+            // straight to (0,0) and finishes dot 340's fetch there - so
+            // frames alternate 89342 / 89341 dots, averaging 60.0988 fps.
+            cycle = 1;
         }
     }
 }
